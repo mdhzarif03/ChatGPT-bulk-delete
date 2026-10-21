@@ -1,40 +1,90 @@
-# ChatGPT Bulk Conversation Delete (Chrome, Manifest V3)
+# ChatGPT Bulk Conversation Delete
 
-Adds a small panel and a checkbox beside each conversation in the chatgpt.com sidebar. Deletes the selected
-conversations one at a time through the normal visible UI (options menu -> Delete -> confirm), and counts a
-conversation as deleted only after its ID has disappeared from the sidebar.
+A small Chrome extension that lets you tick several conversations in the ChatGPT sidebar and delete them in one go.
+It uses the normal ChatGPT interface (options menu -> Delete -> confirm), one conversation at a time, and only counts a
+conversation as deleted once it has actually left the sidebar.
 
-No permissions, no background worker, no network calls, no tokens/cookies, no private APIs. Runs only on `https://chatgpt.com/*`.
+> **Unofficial.** Not affiliated with or endorsed by OpenAI. **Deleting a conversation is permanent.** Use at your own risk.
 
-## Install
-1. Unzip `chatgpt-bulk-delete-extension.zip` into a folder. `manifest.json` must be directly inside that folder.
-2. Open `chrome://extensions`, enable **Developer mode** (top right).
-3. **Load unpacked** -> choose that folder (the one containing manifest.json).
-4. Open https://chatgpt.com/ and reload the tab. A "Bulk delete" panel appears bottom-left.
+## Features
+- Checkbox on the left of every conversation, plus **Select visible** and **Clear**.
+- A bar at the bottom centre appears only while something is selected, showing the count and the actions.
+- Selected rows are highlighted. Colours and font follow ChatGPT's own theme (light, dark and custom accents).
+- Deletes sequentially, with progress and a final report: deleted / skipped / failed / not attempted.
+- **Verified deletion:** success is reported only after that conversation's ID has disappeared from the sidebar.
+- **Safe by default:** if anything is ambiguous or fails (wrong menu, missing button, unexpected dialog, another chat vanishing),
+  it stops and tells you exactly what happened instead of guessing.
+- Targets conversations by their **ID**, not their title, and re-finds each row right before deleting it.
+- **Stop after current** button for long batches.
+- No permissions, no network requests, no tracking. See [PRIVACY.md](PRIVACY.md).
 
-## Update
-Replace the old `extension` folder contents with the new ones, then on `chrome://extensions` press the reload icon on the
-extension card, then reload the ChatGPT tab (Ctrl/Cmd+R).
+## Install (Developer mode)
+The extension is not on the Chrome Web Store, so you load it from a folder.
+
+1. Download this project (**Code -> Download ZIP** on GitHub, or the release ZIP) and unzip it.
+   You should end up with a folder that has `manifest.json` directly inside it.
+2. Open `chrome://extensions` and turn on **Developer mode** (top right).
+3. Click **Load unpacked** and choose that folder (the one containing `manifest.json`).
+4. Open or reload https://chatgpt.com/.
+
+Works in Chromium-based browsers that support Manifest V3 (Chrome, Edge, Brave...). Tested in Chrome.
+
+### Update
+Replace the old folder's contents with the new version, then press the reload icon on the extension's card in
+`chrome://extensions` and reload the ChatGPT tab.
 
 ## Use
-- Tick conversations (checkbox sits at the left edge of each sidebar row), or **Select visible**; **Clear** resets.
-- **Delete selected** -> browser confirm -> runs sequentially. **Stop after current** finishes the in-flight item, then stops.
-- The status box shows: verified deletions, skipped (already gone), the first failure (with an error code) and what was not attempted.
-- The panel hides checkboxes while a batch runs. Nothing is reported as deleted unless the row actually left the sidebar.
+1. Tick one or more conversations in the sidebar. The bar appears at the bottom.
+2. (Optional) **Select visible** ticks every conversation currently shown; **Clear** unticks everything.
+3. Press **Delete selected** and confirm.
+4. Watch the progress. Leave the tab open and in front while it runs. Press **Stop after current** to halt after the
+   conversation in progress.
+5. Read the result in the bar and dismiss it with **x**.
 
-## FIRST RUN ON THE REAL SITE (required, 2 minutes, deletes nothing)
-This project could not be run against your logged-in ChatGPT session, so the live DOM is unverified. Before deleting anything:
-1. Pick ONE disposable conversation, tick it.
-2. Open the panel's **Diagnostics** section and press **Dump DOM evidence (no delete)**. It opens that row's options menu,
-   records what it found, and closes it. The JSON is copied to your clipboard and shown in the box.
-3. Paste that JSON back to me. It shows the options button, menu structure and the Delete item as found on the live site.
-4. If `error` is absent and `deleteItem` is populated, try a real delete of that one disposable chat, then two.
+Tip: try it on one throwaway conversation first.
 
-## Developer checks
+## How it works
+For each selected conversation, in order:
+1. Re-locate its sidebar link by conversation ID (`/c/<id>`). If it is gone, it is skipped.
+2. Find that row's own options button using accessibility attributes (popup/menu, options-like labels).
+3. Open the menu (the menu may be rendered outside the row) and find the single exact **Delete** item.
+4. Click it, then handle the confirmation dialog if one appears.
+5. Wait (event-driven, with time limits) until the ID has left the sidebar and no dialog is open, and check that no other
+   conversation disappeared.
+
+If any step finds zero or more than one candidate, or times out, the batch stops and nothing further is deleted.
+The engine lives in [`engine.js`](engine.js) and the interface in [`content.js`](content.js).
+
+## Troubleshooting
+| Symptom | What to do |
+| --- | --- |
+| No checkboxes | Reload the ChatGPT tab; make sure the extension is enabled. |
+| Bar says `menu_not_opened` / `no_delete_item` / `no_confirm_button` | ChatGPT's interface probably changed. Use the debug text the bar copies to your clipboard and open an issue (see [CONTRIBUTING.md](CONTRIBUTING.md)). |
+| Some chats were not deleted | The bar lists what was not attempted; they stay selected, so just press **Delete selected** again. |
+| A message box asks to confirm | That is this extension's safety prompt, not ChatGPT's. |
+
+The **...** button in the bar opens **Diagnostics**: *Dump DOM evidence* opens and closes one row's menu (deleting nothing)
+and prints what the extension found there.
+
+## Development
 ```
-npm install        # installs playwright (tests use real Chromium)
-npm test           # syntax check + manifest validation + 25 tests
+npm install      # Playwright (tests run in real Chromium)
+npm test         # syntax check + manifest validation + 33 tests
 ```
-Error codes: `ambiguous_row, ambiguous_button, no_options_button, menu_not_opened, ambiguous_menu, menu_mismatch,
-no_delete_item, ambiguous_delete, no_confirm_dialog, ambiguous_dialog, no_confirm_button, not_deleted, dialog_stuck,
-collateral, ui_busy`.
+- `engine.js` - deletion engine (pure DOM logic, no extension APIs).
+- `content.js` - checkbox overlay, action bar, theming.
+- `tests/` - unit tests, plus UI tests that run the real scripts in Chromium against a **simulated** ChatGPT-like sidebar
+  (`tests/fakepage.js`).
+- `tools/` - syntax and manifest checks.
+
+## Limitations
+- Depends on ChatGPT's visible interface. The simulated tests cannot prove the live site stays compatible; it was confirmed
+  working on chatgpt.com by the author in October 2026, and a future redesign may break it (the extension is built to stop
+  and report, not to guess).
+- Only conversations loaded in the sidebar can be selected; scroll to load older ones.
+- Deletion speed is bounded by how fast ChatGPT's own menus respond.
+- Archiving or "delete all chats" are out of scope (use ChatGPT's own Settings for that).
+- Chrome / Chromium only; the extension is English-UI oriented (it looks for a menu item literally named "Delete").
+
+## License
+[MIT](LICENSE)

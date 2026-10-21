@@ -7,13 +7,13 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const E = require('../extension/engine.js');
+const E = require('../engine.js');
 
 let chromium;
 try { ({ chromium } = require('playwright')); }
 catch (e) { ({ chromium } = require(process.env.PLAYWRIGHT_PATH || '/home/claude/.npm-global/lib/node_modules/playwright')); }
 
-const ENGINE_SRC = fs.readFileSync(path.join(__dirname, '../extension/engine.js'), 'utf8');
+const ENGINE_SRC = fs.readFileSync(path.join(__dirname, '../engine.js'), 'utf8');
 const FAKE_SRC = fs.readFileSync(path.join(__dirname, 'fakepage.js'), 'utf8');
 const T = { menu: 400, dialog: 400, verify: 600, close: 200, settle: 100 };
 
@@ -305,25 +305,156 @@ test('ui: checkboxes appear per row, Select visible / Clear / count, and a batch
   const page = await newPage();
   try {
     await page.evaluate(() => buildPage(3));
-    await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../extension/content.js'), 'utf8') });
-    const q = (sel) => page.evaluate((s) => document.querySelector('[data-cgbd]').shadowRoot.querySelectorAll(s).length, sel);
-    await page.waitForFunction(() => document.querySelector('[data-cgbd]').shadowRoot.querySelectorAll('#layer input').length === 3);
-    const txt = (id) => page.evaluate((i) => document.querySelector('[data-cgbd]').shadowRoot.getElementById(i).textContent, id);
-    const click = (id) => page.evaluate((i) => document.querySelector('[data-cgbd]').shadowRoot.getElementById(i).click(), id);
+    await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8') });
+    const q = (sel) => page.evaluate((s) => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll(s).length, sel);
+    await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input').length === 3);
+    const txt = (id) => page.evaluate((i) => document.querySelector('div[data-cgbd]').shadowRoot.getElementById(i).textContent, id);
+    const click = (id) => page.evaluate((i) => document.querySelector('div[data-cgbd]').shadowRoot.getElementById(i).click(), id);
+    const barHidden = () => page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.getElementById('bar').classList.contains('hidden'));
     assert.strictEqual(await txt('count'), '0 selected');
+    assert.strictEqual(await barHidden(), true, 'bar must be hidden until something is selected');
+    // checkbox sits to the LEFT of the conversation link text
+    const geo = await page.evaluate(() => {
+      const cb = document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input').getBoundingClientRect();
+      const a = document.querySelector('li[data-id] a').getBoundingClientRect();
+      return { cbRight: cb.right, aLeft: a.left, aRight: a.right };
+    });
+    assert.ok(geo.cbRight <= geo.aLeft + 40 && geo.cbRight < (geo.aLeft + geo.aRight) / 2, 'checkbox on the left of the row');
     await click('selVis');
+    assert.strictEqual(await barHidden(), false);
     assert.strictEqual(await txt('count'), '3 selected');
     await click('clear');
     assert.strictEqual(await txt('count'), '0 selected');
+    assert.strictEqual(await barHidden(), true, 'bar hides again when selection is cleared');
     // select first row via its real checkbox with a real mouse click
-    const box = await page.evaluate(() => { const r = document.querySelector('[data-cgbd]').shadowRoot.querySelector('#layer input').getBoundingClientRect(); return { x: r.x + 8, y: r.y + 8 }; });
+    const box = await page.evaluate(() => { const r = document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input').getBoundingClientRect(); return { x: r.x + 8, y: r.y + 8 }; });
     await page.mouse.click(box.x, box.y);
     assert.strictEqual(await txt('count'), '1 selected');
     assert.strictEqual(page.url(), 'https://chatgpt.com/', 'clicking a checkbox must not navigate');
+    const bar = await page.evaluate(() => { const r = document.querySelector('div[data-cgbd]').shadowRoot.getElementById('bar').getBoundingClientRect(); return { cx: r.left + r.width / 2, bottom: r.bottom, vw: innerWidth, vh: innerHeight }; });
+    assert.ok(Math.abs(bar.cx - bar.vw / 2) < 3 && bar.bottom > bar.vh / 2, 'bar is bottom-centre');
     page.on('dialog', (d) => d.accept());
     await click('del');
-    await page.waitForFunction(() => /Deleted \(verified\): 1/.test(document.querySelector('[data-cgbd]').shadowRoot.getElementById('status').textContent), null, { timeout: 8000 });
+    await page.waitForFunction(() => /Deleted \(verified\): 1/.test(document.querySelector('div[data-cgbd]').shadowRoot.getElementById('status').textContent), null, { timeout: 8000 });
     assert.strictEqual(await page.evaluate(() => document.querySelectorAll('li[data-id]').length), 2);
     assert.strictEqual(await txt('count'), '0 selected');
   } finally { await page.close(); }
+});
+
+// ---------------- theming ----------------
+async function themed(bodyStyle) {
+  const page = await newPage();
+  await page.evaluate((st) => { document.body.style.cssText = st; buildPage(3); }, bodyStyle);
+  await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8') });
+  await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input').length === 3);
+  return page;
+}
+const cssVar = (page, name) => page.evaluate((n) => document.querySelector('div[data-cgbd]').style.getPropertyValue(n), name);
+
+test('theme: dark page -> light foreground, raised bar; light page -> dark foreground', async () => {
+  const dark = await themed('background:#212121;color:#ececec;font-family:Georgia,serif');
+  try {
+    assert.strictEqual(await cssVar(dark, '--cg-bg'), 'rgb(33,33,33)');
+    assert.strictEqual(await cssVar(dark, '--cg-fg'), 'rgb(236,236,236)');
+    assert.notStrictEqual(await cssVar(dark, '--cg-bar'), 'rgb(33,33,33)', 'dark bar is raised above the page');
+    assert.match(await cssVar(dark, '--cg-font'), /Georgia/);
+  } finally { await dark.close(); }
+  const light = await themed('background:#ffffff;color:#0d0d0d');
+  try {
+    assert.strictEqual(await cssVar(light, '--cg-bg'), 'rgb(255,255,255)');
+    assert.strictEqual(await cssVar(light, '--cg-fg'), 'rgb(13,13,13)');
+    assert.strictEqual(await cssVar(light, '--cg-bar'), 'rgb(255,255,255)');
+  } finally { await light.close(); }
+});
+
+test('theme: switching the page theme at runtime updates the UI colours', async () => {
+  const page = await themed('background:#212121;color:#ececec');
+  try {
+    await page.evaluate(() => { document.body.style.background = '#ffffff'; document.body.style.color = '#0d0d0d'; });
+    await page.waitForFunction(() => document.querySelector('div[data-cgbd]').style.getPropertyValue('--cg-bg') === 'rgb(255,255,255)', null, { timeout: 3000 });
+  } finally { await page.close(); }
+});
+
+test('theme: oklch / modern colour syntax is understood', async () => {
+  const page = await themed('background:oklch(0.25 0 0);color:oklch(0.95 0 0)');
+  try {
+    const bg = await cssVar(page, '--cg-bg');
+    const m = bg.match(/\d+/g).map(Number);
+    assert.ok(m[0] < 80 && m[0] === m[1], 'parsed dark grey from oklch: ' + bg);
+  } finally { await page.close(); }
+});
+
+test('ui: selected rows are highlighted via CSS (page DOM untouched) and cleared with Clear', async () => {
+  const page = await themed('background:#212121;color:#ececec');
+  try {
+    const css = () => page.evaluate(() => document.querySelector('style[data-cgbd]').textContent);
+    assert.ok(!/background-color/.test(await css()));
+    const attrsOf = () => page.evaluate(() => document.querySelector('li[data-id] a').outerHTML);
+    const before = await attrsOf();
+    await page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input').click());
+    const c = await css();
+    assert.match(c, /a\[href\$="\/c\/conv0000-0000-0000-0000-000000000001"\]/);
+    assert.match(c, /background-color:rgba\(236,236,236,0.12\)/);
+    assert.strictEqual(await attrsOf(), before, 'the site row element must not be modified');
+    await page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.getElementById('clear').click());
+    assert.ok(!/background-color/.test(await css()));
+  } finally { await page.close(); }
+});
+
+// ---------------- regression: header "Chat actions" button for the open chat (seen on the live site) ----------------
+const addHeader = (id) => {
+  document.body.insertAdjacentHTML('afterbegin',
+    '<header style="position:fixed;top:0;left:400px"><nav id="crumb"><a href="/c/' + id + '">Open chat title</a>' +
+    '<button id="radix-header" aria-haspopup="menu" aria-expanded="false" aria-label="Chat actions" data-state="closed">...</button></nav></header>');
+  window.__headerClicked = false;
+  document.getElementById('radix-header').addEventListener('pointerdown', () => { window.__headerClicked = true; });
+};
+
+test('regression: chat that is only linked from the header is NOT treated as a sidebar row (skipped, header untouched)', async () => {
+  const r = await inPage(async ([T, addHeaderSrc]) => {
+    const p = buildPage(3);
+    new Function('return ' + addHeaderSrc)()('openchat-0000-0000-0000-000000000000');
+    const s = await CGBD.runBatch(['openchat-0000-0000-0000-000000000000'], { doc: document, timeouts: T });
+    return { skipped: s.skipped, failed: s.failed.length, headerClicked: window.__headerClicked, rows: p.rowCount(), listed: CGBD.listRows(document).length };
+  }, [T, addHeader.toString()]);
+  assert.deepStrictEqual(r.skipped, ['openchat-0000-0000-0000-000000000000']);
+  assert.strictEqual(r.failed, 0);
+  assert.strictEqual(r.headerClicked, false);
+  assert.strictEqual(r.listed, 3);
+});
+
+test('regression: chat linked from header AND sidebar is deleted via the sidebar button only', async () => {
+  const r = await inPage(async ([T, addHeaderSrc]) => {
+    const p = buildPage(3);
+    new Function('return ' + addHeaderSrc)()(p.ids[1]);
+    const s = await CGBD.runBatch([p.ids[1]], { doc: document, timeouts: T });
+    return { deleted: s.deleted, id: p.ids[1], headerClicked: window.__headerClicked, has: p.has(p.ids[1]) };
+  }, [T, addHeader.toString()]);
+  assert.deepStrictEqual(r.deleted, [r.id]);
+  assert.strictEqual(r.headerClicked, false);
+  assert.strictEqual(r.has, false);
+});
+
+test('regression: single sidebar row + header link to the same chat still picks the sidebar', async () => {
+  const r = await inPage(async ([T, addHeaderSrc]) => {
+    const p = buildPage(1);
+    new Function('return ' + addHeaderSrc)()(p.ids[0]);
+    const s = await CGBD.runBatch([p.ids[0]], { doc: document, timeouts: T });
+    return { deleted: s.deleted.length, headerClicked: window.__headerClicked };
+  }, [T, addHeader.toString()]);
+  assert.strictEqual(r.deleted, 1);
+  assert.strictEqual(r.headerClicked, false);
+});
+
+test('regression: an options-like button far from the row line is rejected (no_options_button + row evidence)', async () => {
+  const r = await inPage(async (T) => {
+    const p = buildPage(2);
+    const btn = document.querySelector('li[data-id="' + p.ids[0] + '"] button');
+    btn.style.cssText = 'position:fixed;top:600px;left:700px';
+    const s = await CGBD.runBatch([p.ids[0]], { doc: document, timeouts: T });
+    return { code: s.failed[0].code, html: s.failed[0].detail.rowHtml, rows: p.rowCount() };
+  }, T);
+  assert.strictEqual(r.code, 'no_options_button');
+  assert.match(r.html, /<a href="\/c\//);
+  assert.strictEqual(r.rows, 2);
 });

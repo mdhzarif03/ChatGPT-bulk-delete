@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const dir = path.join(__dirname, '..', 'extension');
+const dir = path.join(__dirname, '..');
 const errors = [];
 let m;
 try { m = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); }
@@ -20,5 +20,9 @@ for (const c of cs) {
   if (!(c.js || []).length) errors.push('no js listed');
   if ((c.js || [])[0] !== 'engine.js') errors.push('engine.js must load before content.js');
 }
+for (const [size, file] of Object.entries(m.icons || {})) {
+  if (!fs.existsSync(path.join(dir, file))) errors.push('missing icon ' + file);
+}
+if (!m.icons) errors.push('icons are missing');
 if (errors.length) { console.error('MANIFEST INVALID:\n- ' + errors.join('\n- ')); process.exit(1); }
 console.log('manifest ok (MV3, no permissions, matches https://chatgpt.com/* only)');

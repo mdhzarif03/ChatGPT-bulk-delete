@@ -128,11 +128,37 @@
   }
 
   // ---------- sidebar rows ----------
+  // Only the SIDEBAR list counts. Links to the open chat elsewhere (header, breadcrumb, canvas panel...) must never be
+  // treated as rows. The sidebar is the nav/aside group holding the most conversation links (ties: the leftmost).
   function conversationAnchors(doc) {
     const all = [...doc.querySelectorAll('a[href*="/c/"]')].filter((a) =>
       !inOwnUi(a) && extractId(a.getAttribute('href')) && !a.closest('[role=menu],[role=dialog],[role=alertdialog]'));
     if (!doc.querySelector('nav,aside')) return all;
-    return all.filter((a) => a.closest('nav,aside'));
+    // During a batch the sidebar container is pinned, so emptying the sidebar can never promote a header link to "row".
+    if (pinnedSidebar && pinnedSidebar.isConnected) return all.filter((a) => pinnedSidebar.contains(a));
+    return pickSidebar(all).list;
+  }
+
+  let pinnedSidebar = null;
+  function pickSidebar(all) {
+    const groups = new Map();
+    for (const a of all) {
+      const g = a.closest('nav,aside');
+      if (!g) continue;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(a);
+    }
+    let best = null;
+    for (const [g, list] of groups) {
+      const hdr = !!g.closest('header,[role=banner]');
+      const left = g.getBoundingClientRect().left;
+      const score = [list.length, hdr ? 0 : 1, -left];
+      if (!best || score[0] > best.score[0] ||
+        (score[0] === best.score[0] && (score[1] > best.score[1] || (score[1] === best.score[1] && score[2] > best.score[2])))) {
+        best = { g, list, score };
+      }
+    }
+    return best ? { g: best.g, list: best.list } : { g: null, list: [] };
   }
 
   function listRows(doc) {
@@ -167,6 +193,23 @@
     return { score, reasons };
   }
 
+  // A row's options button must sit on the row's own line. Anything with a real box that is not vertically aligned with
+  // the row's link (a header button, another row's button) is rejected. Zero-size boxes (hover-only UI) are not judged.
+  function alignedWithRow(btn, anchor) {
+    const b = btn.getBoundingClientRect();
+    if (!b.width && !b.height) return true;
+    const a = anchor.getBoundingClientRect();
+    if (!a.width && !a.height) return true;
+    const dy = Math.abs((b.top + b.height / 2) - (a.top + a.height / 2));
+    return dy <= Math.max(a.height * 0.75, 22);
+  }
+
+  function rowEvidence(anchor) {
+    let n = anchor;
+    for (let i = 0; i < 2 && n.parentElement && !n.parentElement.matches('nav,aside,body'); i++) n = n.parentElement;
+    return n.outerHTML.replace(/\s+/g, ' ').slice(0, 1800);
+  }
+
   // Walk up from the anchor one level at a time; the first level that contains candidates wins.
   // Never climb into a container that holds a different conversation, nor into nav/aside/body.
   function findOptionsButton(entry) {
@@ -175,7 +218,7 @@
     for (let i = 0; i < 7 && level; i++) {
       if (i > 0 && level.matches && level.matches('nav,aside,body,html')) break;
       const cands = [...level.querySelectorAll('button,[role=button]')]
-        .filter((b) => !inOwnUi(b))
+        .filter((b) => !inOwnUi(b) && alignedWithRow(b, anchor))
         .map((b) => Object.assign({ b }, optionEvidence(b)))
         .filter((c) => c.score > 0);
       if (cands.length) {
@@ -193,7 +236,7 @@
       if (other) break;
       level = parent;
     }
-    throw new BatchError('no_options_button', 'Could not find an options button for conversation ' + id + '.');
+    throw new BatchError('no_options_button', 'Could not find an options button on the row of conversation ' + id + '.', { rowHtml: rowEvidence(anchor) });
   }
 
   // ---------- menu / dialog ----------
@@ -227,7 +270,7 @@
     };
   }
 
-  async function openMenu(doc, btn, t) {
+  async function openMenu(doc, btn, t, opts) {
     const before = new Set(visibleMenus(doc));
     const fresh = () => {
       const f = visibleMenus(doc).filter((m) => !before.has(m));
@@ -251,6 +294,7 @@
     if (!found) {
       const ev = snapshot(doc, btn);
       ev.strategiesTried = tried;
+      if (opts && opts.anchor) ev.rowHtml = rowEvidence(opts.anchor);
       throw new BatchError('menu_not_opened', 'The options menu did not open (tried: ' + tried.join(', ') + ').', ev);
     }
     let menus = found;
@@ -308,7 +352,7 @@
     const before = listRows(doc).map((r) => r.id);
     const btn = findOptionsButton(entry);
     hover(entry.anchor);
-    const menu = await openMenu(doc, btn, t);
+    const menu = await openMenu(doc, btn, t, { anchor: entry.anchor });
     const item = findDeleteItem(menu);
 
     const dialogsBefore = new Set(visibleDialogs(doc));
@@ -369,6 +413,9 @@
     const hooks = opts.hooks || {};
     const results = [];
     let stopped = null;
+    pinnedSidebar = null;
+    pinnedSidebar = pickSidebar(conversationAnchors(doc)).g || null;
+    try {
     for (let i = 0; i < ids.length; i++) {
       if (hooks.shouldStop && hooks.shouldStop()) { stopped = { code: 'user_stop', message: 'Stopped by user.' }; break; }
       const id = ids[i];
@@ -386,6 +433,7 @@
         break;
       }
     }
+    } finally { pinnedSidebar = null; }
     const attempted = new Set(results.map((r) => r.id));
     const notAttempted = ids.filter((x) => !attempted.has(x));
     return {
@@ -422,7 +470,7 @@
       out.optionsButtonEvidence = optionEvidence(btn);
       out.rowChain = [];
       for (let n = btn, i = 0; n && i < 6; n = n.parentElement, i++) out.rowChain.push(n.tagName.toLowerCase() + (n.getAttribute('role') ? '[role=' + n.getAttribute('role') + ']' : ''));
-      const menu = await openMenu(doc, btn, t);
+      const menu = await openMenu(doc, btn, t, { anchor: entry.anchor });
       out.menu = describe(menu);
       out.menuParentChain = [];
       for (let n = menu, i = 0; n && i < 5; n = n.parentElement, i++) out.menuParentChain.push(n.tagName.toLowerCase());

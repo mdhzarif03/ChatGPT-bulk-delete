@@ -1,4 +1,9 @@
-/* content.js - selection UI. All UI lives in a closed-off Shadow DOM overlay; the page's own DOM is never modified. */
+/*
+ * content.js - selection UI.
+ * - Checkboxes and the action bar live in a Shadow DOM overlay; the page's own DOM is never modified.
+ * - The only page-level additions are one <style> tag (row padding + highlight of selected rows).
+ * - Colours and font are read from the live page, so the UI follows ChatGPT's light / dark / custom themes.
+ */
 (function () {
   'use strict';
   if (window.__cgbdLoaded || !window.CGBD) return;
@@ -7,8 +12,9 @@
 
   const selected = new Set();
   const boxes = new Map(); // id -> checkbox element
-  const state = { running: false, stop: false, minimized: false };
+  const state = { running: false, stop: false };
 
+  // ---------- host + shadow ----------
   const host = document.createElement('div');
   host.setAttribute('data-cgbd', '1');
   host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483646;pointer-events:none;';
@@ -16,29 +22,36 @@
   root.innerHTML = `
 <style>
   :host{all:initial}
-  *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  *{box-sizing:border-box;font-family:var(--cg-font,system-ui,sans-serif)}
   #layer{position:fixed;inset:0;pointer-events:none}
-  #layer input{position:fixed;width:16px;height:16px;margin:0;pointer-events:auto;cursor:pointer;accent-color:#10a37f;border-radius:4px}
-  #bar{position:fixed;left:50%;bottom:104px;transform:translateX(-50%);max-width:min(94vw,640px);
-    background:#2f2f2f;color:#ececec;border:1px solid #4a4a4a;border-radius:16px;padding:8px 10px;
-    box-shadow:0 8px 28px rgba(0,0,0,.45);font-size:13px;pointer-events:auto;display:flex;flex-direction:column;gap:6px}
+  #layer input{
+    -webkit-appearance:none;appearance:none;position:fixed;width:16px;height:16px;margin:0;
+    border:1.5px solid var(--cg-box);border-radius:5px;background:transparent;cursor:pointer;pointer-events:auto;
+    transition:background-color .12s,border-color .12s}
+  #layer input:hover{border-color:var(--cg-fg)}
+  #layer input:checked{background:var(--cg-fg);border-color:var(--cg-fg)}
+  #layer input:checked::after{content:"";position:absolute;left:4.5px;top:1px;width:4px;height:8px;
+    border:solid var(--cg-bg);border-width:0 2px 2px 0;transform:rotate(45deg)}
+  #layer input:focus-visible{outline:2px solid var(--cg-fg);outline-offset:2px}
+
+  #bar{position:fixed;left:50%;bottom:104px;transform:translateX(-50%);width:max-content;max-width:min(94vw,680px);
+    background:var(--cg-bar);color:var(--cg-fg);border:1px solid var(--cg-line);border-radius:20px;padding:8px 10px;
+    box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:14px;pointer-events:auto;display:flex;flex-direction:column;gap:6px}
   #row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
-  #count{font-weight:600;padding:0 4px;white-space:nowrap}
-  button{cursor:pointer;border:1px solid #5a5a5a;background:transparent;color:inherit;border-radius:999px;padding:6px 12px;font-size:13px;white-space:nowrap}
-  button:hover:not(:disabled){background:rgba(255,255,255,.1)}
+  #count{font-weight:600;padding:0 6px;white-space:nowrap}
+  button{cursor:pointer;border:1px solid var(--cg-line);background:transparent;color:inherit;border-radius:999px;
+    padding:6px 13px;font-size:14px;line-height:1.3;white-space:nowrap;transition:background-color .12s}
+  button:hover:not(:disabled){background:var(--cg-hover)}
+  button:focus-visible{outline:2px solid var(--cg-fg);outline-offset:1px}
   button:disabled{opacity:.45;cursor:not-allowed}
-  button.danger{background:#d93025;border-color:#d93025;color:#fff;font-weight:600}
-  button.danger:hover:not(:disabled){background:#e8453b}
-  button.icon{padding:6px 10px}
-  #status{white-space:pre-wrap;max-height:160px;overflow:auto;line-height:1.4;padding:2px 6px;text-align:left}
+  button.danger{background:var(--cg-danger);border-color:var(--cg-danger);color:#fff;font-weight:600}
+  button.danger:hover:not(:disabled){background:var(--cg-danger-hover);border-color:var(--cg-danger-hover)}
+  button.icon{padding:6px 11px}
+  #status{white-space:pre-wrap;max-height:160px;overflow:auto;line-height:1.45;padding:2px 8px;text-align:left;color:var(--cg-fg)}
   #diagBox{display:flex;flex-direction:column;gap:6px}
-  textarea{width:100%;height:90px;font:11px monospace;background:#1e1e1e;color:#ddd;border:1px solid #4a4a4a;border-radius:8px}
+  textarea{width:100%;height:90px;font:11px ui-monospace,Menlo,Consolas,monospace;background:var(--cg-hover);
+    color:var(--cg-fg);border:1px solid var(--cg-line);border-radius:10px;padding:6px}
   .hidden{display:none!important}
-  @media (prefers-color-scheme: light){
-    #bar{background:#fff;color:#111;border-color:#ccc}
-    button{border-color:#bbb} button:hover:not(:disabled){background:rgba(0,0,0,.06)}
-    textarea{background:#f6f6f6;color:#111;border-color:#ccc}
-  }
 </style>
 <div id="layer"></div>
 <div id="bar" class="hidden" role="region" aria-label="Bulk delete">
@@ -60,11 +73,75 @@
   const $ = (id) => root.getElementById(id);
   const layer = $('layer');
 
+  // ---------- theme: derive everything from the live page ----------
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 1;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  function toRGBA(css) { // any CSS colour syntax -> [r,g,b,a]
+    try {
+      cx.clearRect(0, 0, 1, 1);
+      cx.fillStyle = '#000';
+      cx.fillStyle = css;
+      cx.fillRect(0, 0, 1, 1);
+      const d = cx.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2], d[3] / 255];
+    } catch (e) { return null; }
+  }
+  const mix = (a, b, t) => a.map((v, i) => Math.round(v * (1 - t) + b[i] * t));
+  const rgb = (c, a) => (a == null ? 'rgb(' + c.join(',') + ')' : 'rgba(' + c.join(',') + ',' + a + ')');
+  const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+
+  let themeKey = '';
+  let selectedStyle = null;
+  function applyTheme() {
+    let bg = null;
+    for (const el of [document.querySelector('main'), document.body, document.documentElement]) {
+      if (!el) continue;
+      const c = toRGBA(getComputedStyle(el).backgroundColor);
+      if (c && c[3] > 0.5) { bg = c.slice(0, 3); break; }
+    }
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    if (!bg) bg = dark ? [33, 33, 33] : [255, 255, 255];
+    let fg = toRGBA(getComputedStyle(document.body).color);
+    fg = fg && fg[3] > 0.5 ? fg.slice(0, 3) : (lum(bg) < 0.5 ? [236, 236, 236] : [13, 13, 13]);
+    const isDark = lum(bg) < 0.5;
+    const font = getComputedStyle(document.body).fontFamily || 'system-ui, sans-serif';
+    const key = [bg, fg, font].join('|');
+    if (key === themeKey) return;
+    themeKey = key;
+    const bar = isDark ? mix(bg, [255, 255, 255], 0.1) : bg;
+    const v = {
+      '--cg-font': font,
+      '--cg-bg': rgb(bg),
+      '--cg-fg': rgb(fg),
+      '--cg-bar': rgb(bar),
+      '--cg-line': rgb(fg, isDark ? 0.2 : 0.16),
+      '--cg-hover': rgb(fg, 0.1),
+      '--cg-box': rgb(fg, 0.5),
+      '--cg-danger': isDark ? '#e5484d' : '#d92d20',
+      '--cg-danger-hover': isDark ? '#f0595e' : '#b42318'
+    };
+    for (const k in v) host.style.setProperty(k, v[k]);
+    renderSelectionStyle(fg);
+  }
+
+  // ---------- page-level style: row padding + highlight of selected rows ----------
+  const pageStyle = document.createElement('style');
+  pageStyle.setAttribute('data-cgbd', '1');
+  let lastFg = [236, 236, 236];
+  function renderSelectionStyle(fg) {
+    if (fg) lastFg = fg;
+    const base = 'nav a[href*="/c/"],aside a[href*="/c/"]{padding-inline-start:32px !important}';
+    const sel = [...selected].map((id) => 'nav a[href$="/c/' + id + '"],aside a[href$="/c/' + id + '"]');
+    pageStyle.textContent = base + (sel.length ? '\n' + sel.join(',') + '{background-color:' + rgb(lastFg, 0.12) + ' !important}' : '');
+  }
+
   // ---------- checkbox overlay ----------
   function makeBox(id) {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.title = 'Select for bulk delete';
+    cb.setAttribute('aria-label', 'Select conversation for bulk delete');
     cb.checked = selected.has(id);
     cb.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -96,6 +173,7 @@
 
   function sync() {
     rafPending = false;
+    applyTheme();
     const seen = new Set();
     for (const r of E.listRows(document)) {
       const rect = visibleRect(r.anchor);
@@ -112,6 +190,7 @@
     updateCount();
   }
 
+  const hasStatus = () => $('status').textContent !== '';
   function updateCount() {
     $('count').textContent = selected.size + ' selected';
     $('del').disabled = state.running || selected.size === 0;
@@ -121,26 +200,30 @@
     $('dismiss').classList.toggle('hidden', state.running || !hasStatus());
     $('bar').classList.toggle('hidden', !(selected.size > 0 || state.running || hasStatus()));
     layer.style.visibility = state.running ? 'hidden' : 'visible';
+    renderSelectionStyle();
   }
-
-  // Debounced observation; ignores nothing expensive: callback only schedules a cheap sync.
-  let moTimer = null;
-  new MutationObserver(() => {
-    clearTimeout(moTimer);
-    moTimer = setTimeout(scheduleSync, 120);
-  }).observe(document.body, { childList: true, subtree: true });
-  addEventListener('scroll', scheduleSync, { capture: true, passive: true });
-  addEventListener('resize', scheduleSync, { passive: true });
-  addEventListener('popstate', scheduleSync);
-
-  // ---------- actions ----------
-  const hasStatus = () => $('status').textContent !== '';
   const status = (msg) => {
     $('status').textContent = msg || '';
     $('status').classList.toggle('hidden', !msg);
     updateCount();
   };
 
+  // Debounced observation: the callback only schedules one cheap, rAF-batched sync.
+  let moTimer = null;
+  new MutationObserver(() => {
+    clearTimeout(moTimer);
+    moTimer = setTimeout(scheduleSync, 120);
+  }).observe(document.body, { childList: true, subtree: true });
+  // Theme switches change attributes/classes on <html>/<body>, not the sidebar subtree.
+  const themeMO = new MutationObserver(() => { clearTimeout(moTimer); moTimer = setTimeout(scheduleSync, 60); });
+  themeMO.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-color-mode'] });
+  themeMO.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleSync);
+  addEventListener('scroll', scheduleSync, { capture: true, passive: true });
+  addEventListener('resize', scheduleSync, { passive: true });
+  addEventListener('popstate', scheduleSync);
+
+  // ---------- actions ----------
   $('selVis').addEventListener('click', () => {
     for (const id of boxes.keys()) selected.add(id);
     for (const [id, cb] of boxes) cb.checked = selected.has(id);
@@ -152,7 +235,7 @@
     updateCount();
   });
   $('more').addEventListener('click', () => $('diagBox').classList.toggle('hidden'));
-  $('dismiss').addEventListener('click', () => { status(''); });
+  $('dismiss').addEventListener('click', () => status(''));
   $('stop').addEventListener('click', () => { state.stop = true; status('Stopping after the current conversation…'); });
 
   $('diag').addEventListener('click', async () => {
@@ -166,10 +249,12 @@
       $('out').value = json;
       try { await navigator.clipboard.writeText(json); status('Evidence dumped below and copied to clipboard.'); }
       catch (e) { status('Evidence dumped below. Select all and copy it manually.'); }
+    } catch (e) {
+      status('Diagnostics failed: ' + (e && e.message ? e.message : e));
     } finally { state.running = false; updateCount(); scheduleSync(); }
   });
 
-  function report(summary, wasSelected) {
+  function report(summary) {
     const lines = [];
     lines.push('Deleted (verified): ' + summary.deleted.length);
     if (summary.skipped.length) lines.push('Skipped (not in sidebar): ' + summary.skipped.length);
@@ -208,7 +293,7 @@
         const dbg = JSON.stringify({ code: summary.failed[0].code, message: summary.failed[0].message, detail: summary.failed[0].detail }, null, 2);
         $('out').value = dbg;
         $('diagBox').classList.remove('hidden');
-        try { await navigator.clipboard.writeText(dbg); msg += '\nDebug info copied to clipboard - paste it to the developer.'; }
+        try { await navigator.clipboard.writeText(dbg); msg += '\nDebug info copied to clipboard - paste it into a bug report.'; }
         catch (e) { msg += '\nDebug info is in the Diagnostics box - copy it.'; }
       }
       status(msg);
@@ -221,10 +306,8 @@
     }
   });
 
-  const css = document.createElement('style');
-  css.setAttribute('data-cgbd', '1');
-  css.textContent = 'nav a[href*="/c/"],aside a[href*="/c/"]{padding-inline-start:32px !important}';
-  document.head.appendChild(css);
+  document.head.appendChild(pageStyle);
   document.documentElement.appendChild(host);
+  applyTheme();
   scheduleSync();
 })();
