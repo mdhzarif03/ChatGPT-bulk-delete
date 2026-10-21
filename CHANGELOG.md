@@ -16,3 +16,14 @@ Design (each choice answers a requirement, not a guess about the live DOM):
 - Event-driven waits (MutationObserver + bounded timeouts); no fixed sleeps.
 - UI in a Shadow DOM overlay; the site's DOM is never modified, so rerenders cannot drop the checkboxes.
 - Built-in non-destructive DOM evidence dump to verify the live site before any deletion.
+
+## 1.0.1 (after first live run: `menu_not_opened`, panel covering sidebar, stray checkboxes)
+Evidence: user screenshot of the live site.
+- Layout: panel overlapped sidebar rows and the checkbox layer painted above it; checkboxes were shown for rows hidden under the
+  sticky header and sat on top of titles. Fixed: panel placed beside the sidebar, layer below panel, a row gets a checkbox only if
+  `elementFromPoint` hits that row, checkbox moved to the right side of the row.
+- `menu_not_opened` (live): root cause NOT yet confirmed (no live DOM was available). Suspected: my click helper called `focus()` on
+  the trigger right after the menu opened, which Radix-style menus treat as "focus outside" and dismiss. Removed that call, and added
+  two fallbacks (keyboard Enter on the trigger, plain click). Local tests cannot tell whether this was the live cause.
+- Every failure now captures DOM evidence (trigger attributes, active element, any menu/dialog elements in any state) into the
+  Diagnostics box and the clipboard, so a failed live run gives the exact data needed to fix the next step.

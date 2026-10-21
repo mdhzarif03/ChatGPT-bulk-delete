@@ -175,6 +175,28 @@ test('sim: menu never opens -> menu_not_opened (timeout path)', async () => {
   assert.ok(r.ms < 2000, 'timeout must be bounded');
 });
 
+test('sim: menu never opens -> failure carries DOM evidence for debugging', async () => {
+  const r = await inPage(async (T) => {
+    const p = buildPage(1, { noMenu: true });
+    const s = await CGBD.runBatch(p.ids, { doc: document, timeouts: T });
+    const d = s.failed[0].detail;
+    return { tried: d.strategiesTried, haspopup: d.button.attrs['aria-haspopup'], hasActive: !!d.activeElement };
+  }, T);
+  assert.deepStrictEqual(r.tried, ['pointer', 'keyboard', 'click']);
+  assert.strictEqual(r.haspopup, 'menu');
+  assert.ok(r.hasActive);
+});
+
+test('sim: trigger that only opens via keyboard still works (fallback strategy)', async () => {
+  const r = await inPage(async (T) => {
+    const p = buildPage(1, { keyboardOnly: true });
+    const s = await CGBD.runBatch(p.ids, { doc: document, timeouts: T });
+    return { deleted: s.deleted.length, rows: p.rowCount() };
+  }, T);
+  assert.strictEqual(r.deleted, 1);
+  assert.strictEqual(r.rows, 0);
+});
+
 test('sim: menu bound to a different trigger -> menu_mismatch', async () => {
   const r = await inPage(async (T) => {
     const p = buildPage(1, { wrongLabelledBy: true });

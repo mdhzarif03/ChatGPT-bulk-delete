@@ -20,6 +20,10 @@ window.buildPage = function (n, b) {
     if (openDialogEl) { openDialogEl.remove(); openDialogEl = null; }
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+  // Radix-like: focus moving outside an open menu dismisses it (this is what broke a naive el.focus()).
+  document.addEventListener('focusin', (e) => {
+    if (openMenuEl && !openMenuEl.contains(e.target)) closeAll();
+  });
 
   function item(text, extra) {
     const d = document.createElement('div');
@@ -94,8 +98,12 @@ window.buildPage = function (n, b) {
     btn.setAttribute('aria-label', 'Open conversation options');
     btn.textContent = '...';
     btn.addEventListener('pointerdown', (e) => {
-      if (b.noMenu || e.button !== 0) return;
+      if (b.noMenu || b.keyboardOnly || e.button !== 0) return;
       showMenu(btn, id);
+    });
+    btn.addEventListener('keydown', (e) => {
+      if (b.noMenu) return;
+      if (e.key === 'Enter') showMenu(btn, id);
     });
     li.append(a, btn);
     if (b.twoButtons) {

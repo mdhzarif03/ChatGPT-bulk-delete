@@ -7,9 +7,9 @@ conversation as deleted only after its ID has disappeared from the sidebar.
 No permissions, no background worker, no network calls, no tokens/cookies, no private APIs. Runs only on `https://chatgpt.com/*`.
 
 ## Install
-1. Unzip `chatgpt-bulk-delete.zip`. You get a folder `extension/`.
+1. Unzip `chatgpt-bulk-delete-extension.zip` into a folder. `manifest.json` must be directly inside that folder.
 2. Open `chrome://extensions`, enable **Developer mode** (top right).
-3. **Load unpacked** -> choose the `extension` folder.
+3. **Load unpacked** -> choose that folder (the one containing manifest.json).
 4. Open https://chatgpt.com/ and reload the tab. A "Bulk delete" panel appears bottom-left.
 
 ## Update
@@ -33,7 +33,7 @@ This project could not be run against your logged-in ChatGPT session, so the liv
 ## Developer checks
 ```
 npm install        # installs playwright (tests use real Chromium)
-npm test           # syntax check + manifest validation + 23 tests
+npm test           # syntax check + manifest validation + 25 tests
 ```
 Error codes: `ambiguous_row, ambiguous_button, no_options_button, menu_not_opened, ambiguous_menu, menu_mismatch,
 no_delete_item, ambiguous_delete, no_confirm_dialog, ambiguous_dialog, no_confirm_button, not_deleted, dialog_stuck,

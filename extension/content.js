@@ -17,7 +17,7 @@
 <style>
   :host{all:initial}
   *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  .panel{position:fixed;left:8px;bottom:84px;width:244px;background:#1f1f1f;color:#eee;border:1px solid #444;border-radius:10px;
+  .panel{position:fixed;left:12px;bottom:90px;width:244px;background:#1f1f1f;color:#eee;border:1px solid #444;border-radius:10px;
     box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:12.5px;pointer-events:auto}
   @media (prefers-color-scheme: light){.panel{background:#fff;color:#111;border-color:#ccc}}
   .hdr{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #444}
@@ -34,9 +34,10 @@
   summary{cursor:pointer}
   .hidden{display:none!important}
   #layer{position:fixed;inset:0;pointer-events:none}
-  #layer input{position:fixed;width:16px;height:16px;margin:0;pointer-events:auto;cursor:pointer;accent-color:#10a37f}
+  #layer input{position:fixed;width:16px;height:16px;margin:0;pointer-events:auto;cursor:pointer;accent-color:#10a37f;outline:1px solid rgba(128,128,128,.6);border-radius:3px;background:#2a2a2a}
 </style>
-<div class="panel">
+<div id="layer"></div>
+<div class="panel" id="panel">
   <div class="hdr"><b>Bulk delete</b><span id="count">0 selected</span><button id="min" style="flex:none" title="Minimize">–</button></div>
   <div class="body" id="body">
     <div class="row"><button id="selVis">Select visible</button><button id="clear">Clear</button></div>
@@ -48,8 +49,7 @@
       <textarea id="out" readonly></textarea>
     </details>
   </div>
-</div>
-<div id="layer"></div>`;
+</div>`;
   const $ = (id) => root.getElementById(id);
   const layer = $('layer');
 
@@ -76,20 +76,34 @@
     requestAnimationFrame(sync);
   }
 
+  function placePanel() {
+    const nav = document.querySelector('nav');
+    const nr = nav ? nav.getBoundingClientRect() : null;
+    const left = nr && nr.width > 40 && nr.right < innerWidth * 0.6 ? Math.round(nr.right + 12) : 12;
+    $('panel').style.left = left + 'px';
+  }
+
+  // A row is "really visible" only if its own pixels are what the user would hit at that point
+  // (excludes rows scrolled under sticky headers, covered by menus, etc.).
+  function visibleRect(a) {
+    const r = a.getBoundingClientRect();
+    if (r.width < 40 || r.height < 12) return null;
+    const cy = r.top + r.height / 2;
+    if (cy < 0 || cy > innerHeight) return null;
+    const hit = document.elementFromPoint(r.left + Math.min(60, r.width / 2), cy);
+    return hit && a.contains(hit) ? r : null;
+  }
+
   function sync() {
     rafPending = false;
+    placePanel();
     const seen = new Set();
     for (const r of E.listRows(document)) {
-      const rect = r.anchor.getBoundingClientRect();
-      if (rect.width < 20 || rect.height < 10 || rect.bottom < 0 || rect.top > innerHeight) continue;
-      const nav = r.anchor.closest('nav,aside');
-      if (nav) {
-        const nr = nav.getBoundingClientRect();
-        if (rect.bottom <= nr.top + 2 || rect.top >= nr.bottom - 2 || rect.right <= nr.left) continue;
-      }
+      const rect = visibleRect(r.anchor);
+      if (!rect) continue;
       seen.add(r.id);
       const cb = boxes.get(r.id) || makeBox(r.id);
-      cb.style.left = Math.round(rect.left + 4) + 'px';
+      cb.style.left = Math.round(rect.right - 62) + 'px';
       cb.style.top = Math.round(rect.top + rect.height / 2 - 8) + 'px';
       if (cb.checked !== selected.has(r.id)) cb.checked = selected.has(r.id);
     }
@@ -186,7 +200,15 @@
         }
       });
       for (const id of summary.deleted.concat(summary.skipped)) selected.delete(id);
-      status(report(summary));
+      let msg = report(summary);
+      if (summary.failed.length) {
+        const dbg = JSON.stringify({ code: summary.failed[0].code, message: summary.failed[0].message, detail: summary.failed[0].detail }, null, 2);
+        $('out').value = dbg;
+        root.querySelector('details').open = true;
+        try { await navigator.clipboard.writeText(dbg); msg += '\nDebug info copied to clipboard - paste it to the developer.'; }
+        catch (e) { msg += '\nDebug info is in the Diagnostics box - copy it.'; }
+      }
+      status(msg);
     } catch (e) {
       status('Unexpected error: ' + (e && e.message ? e.message : e));
     } finally {

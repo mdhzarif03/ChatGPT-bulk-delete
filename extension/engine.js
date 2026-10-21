@@ -110,7 +110,7 @@
     hover(el);
     fire(el, 'pointerdown', Object.assign({ buttons: 1 }, pos, ptr), P);
     fire(el, 'mousedown', Object.assign({ buttons: 1 }, pos));
-    if (typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    // Deliberately NO el.focus(): menu libraries dismiss on focus moving outside the menu.
     fire(el, 'pointerup', Object.assign({ buttons: 0 }, pos, ptr), P);
     fire(el, 'mouseup', Object.assign({ buttons: 0 }, pos));
     fire(el, 'click', Object.assign({ buttons: 0, detail: 1 }, pos));
@@ -209,14 +209,50 @@
     if (!ok) throw new BatchError('ui_busy', 'A menu or dialog is already open and could not be closed.');
   }
 
+  function pressKey(el, key) {
+    const view = el.ownerDocument.defaultView;
+    for (const type of ['keydown', 'keyup']) {
+      el.dispatchEvent(new view.KeyboardEvent(type, { key, code: key, bubbles: true, cancelable: true }));
+    }
+  }
+
+  function snapshot(doc, btn) {
+    const q = (sel) => [...doc.querySelectorAll(sel)].map(describe);
+    return {
+      url: doc.defaultView.location.href,
+      button: describe(btn),
+      activeElement: describe(doc.activeElement || doc.body),
+      menusAnyState: q('[role=menu],[data-radix-menu-content],[data-radix-popper-content-wrapper]'),
+      dialogsAnyState: q('[role=dialog],[role=alertdialog]')
+    };
+  }
+
   async function openMenu(doc, btn, t) {
     const before = new Set(visibleMenus(doc));
-    realClick(btn);
-    const found = await waitFor(() => {
-      const fresh = visibleMenus(doc).filter((m) => !before.has(m));
-      return fresh.length ? fresh : null;
-    }, { timeout: t.menu, doc });
-    if (!found) throw new BatchError('menu_not_opened', 'The options menu did not open.');
+    const fresh = () => {
+      const f = visibleMenus(doc).filter((m) => !before.has(m));
+      return f.length ? f : null;
+    };
+    // Try progressively different (still ordinary-UI) ways to open the menu; stop at the first that works.
+    const strategies = [
+      ['pointer', () => realClick(btn)],
+      ['keyboard', () => { try { btn.focus({ preventScroll: true }); } catch (e) { /* ignore */ } pressKey(btn, 'Enter'); }],
+      ['click', () => btn.click()]
+    ];
+    let found = null;
+    const tried = [];
+    for (const [name, go] of strategies) {
+      go();
+      tried.push(name);
+      found = await waitFor(fresh, { timeout: t.menu, doc });
+      if (found) break;
+      if (visibleMenus(doc).length) break; // something opened that we cannot attribute; do not keep clicking
+    }
+    if (!found) {
+      const ev = snapshot(doc, btn);
+      ev.strategiesTried = tried;
+      throw new BatchError('menu_not_opened', 'The options menu did not open (tried: ' + tried.join(', ') + ').', ev);
+    }
     let menus = found;
     if (menus.length > 1 && btn.id) {
       const bound = menus.filter((m) => m.getAttribute('aria-labelledby') === btn.id);
@@ -405,6 +441,6 @@
     BatchError, DEFAULT_TIMEOUTS,
     extractId, norm, waitFor, realClick, pressEscape, hover,
     listRows, resolveEntry, findOptionsButton, findDeleteItem, findConfirmButton,
-    visibleMenus, visibleDialogs, deleteOne, runBatch, diagnose
+    visibleMenus, visibleDialogs, deleteOne, runBatch, diagnose, snapshot
   };
 });
