@@ -7,7 +7,7 @@
 window.buildPage = function (n, b) {
   b = b || {};
   document.body.innerHTML =
-    '<nav id="nav" style="width:260px"><button id="newchat">New chat</button><ul id="list" style="list-style:none;margin:0;padding:0"></ul>' +
+    '<nav id="nav" style="width:260px"><button id="newchat">New chat</button><div id="recent-heading">Recents</div><ul id="list" style="list-style:none;margin:0;padding:0"></ul>' +
     '<button id="acct" aria-haspopup="menu" aria-label="Account menu">Account</button></nav><div id="portal"></div>';
   const list = document.getElementById('list');
   const portal = document.getElementById('portal');

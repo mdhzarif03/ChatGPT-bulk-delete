@@ -321,7 +321,8 @@ test('ui: checkboxes appear per row, Select visible / Clear / count, and a batch
     await page.evaluate(() => buildPage(3));
     await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8') });
     const q = (sel) => page.evaluate((s) => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll(s).length, sel);
-    await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input').length === 3);
+    await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input:not([data-cgbd-master])').length === 3);
+    await page.waitForFunction(() => !!document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input[data-cgbd-master]'));
     const txt = (id) => page.evaluate((i) => document.querySelector('div[data-cgbd]').shadowRoot.getElementById(i).textContent, id);
     const click = (id) => page.evaluate((i) => document.querySelector('div[data-cgbd]').shadowRoot.getElementById(i).click(), id);
     const barHidden = () => page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.getElementById('bar').classList.contains('hidden'));
@@ -329,7 +330,7 @@ test('ui: checkboxes appear per row, Select visible / Clear / count, and a batch
     assert.strictEqual(await barHidden(), true, 'bar must be hidden until something is selected');
     // checkbox sits to the LEFT of the conversation link text
     const geo = await page.evaluate(() => {
-      const cb = document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input').getBoundingClientRect();
+      const cb = document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input:not([data-cgbd-master])').getBoundingClientRect();
       const a = document.querySelector('li[data-id] a').getBoundingClientRect();
       return { cbRight: cb.right, aLeft: a.left, aRight: a.right };
     });
@@ -341,7 +342,7 @@ test('ui: checkboxes appear per row, Select visible / Clear / count, and a batch
     assert.strictEqual(await txt('count'), '0 selected');
     assert.strictEqual(await barHidden(), true, 'bar hides again when selection is cleared');
     // select first row via its real checkbox with a real mouse click
-    const box = await page.evaluate(() => { const r = document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input').getBoundingClientRect(); return { x: r.x + 8, y: r.y + 8 }; });
+    const box = await page.evaluate(() => { const r = document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input:not([data-cgbd-master])').getBoundingClientRect(); return { x: r.x + 8, y: r.y + 8 }; });
     await page.mouse.click(box.x, box.y);
     assert.strictEqual(await txt('count'), '1 selected');
     assert.strictEqual(page.url(), 'https://chatgpt.com/', 'clicking a checkbox must not navigate');
@@ -355,12 +356,89 @@ test('ui: checkboxes appear per row, Select visible / Clear / count, and a batch
   } finally { await page.close(); }
 });
 
+test('ui: Recents checkbox selects its loaded rows without selecting Pinned or Projects', async () => {
+  const page = await newPage();
+  try {
+    await page.evaluate(() => {
+      buildPage(4);
+      const nav = document.getElementById('nav');
+      const makeSection = (name, id) => {
+        const heading = document.createElement('div');
+        heading.textContent = name;
+        heading.style.display = 'inline-block';
+        const list = document.createElement('ul');
+        const li = document.createElement('li');
+        li.innerHTML = '<a href="/c/' + id + '">Test ' + name + '</a>';
+        list.appendChild(li);
+        nav.insertBefore(heading, document.getElementById('recent-heading'));
+        nav.insertBefore(list, document.getElementById('recent-heading'));
+      };
+      makeSection('Projects', 'project000-0000-0000-000000000000');
+      makeSection('Pinned', 'pinned000-0000-0000-000000000000');
+      document.getElementById('recent-heading').style.display = 'inline-block';
+      document.querySelectorAll('li[data-id]')[3].style.cssText += ';position:fixed;top:1000px';
+    });
+    await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8') });
+    await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input[data-cgbd-master]').length === 3);
+
+    const state = () => page.evaluate(() => {
+      const shadow = document.querySelector('div[data-cgbd]').shadowRoot;
+      const master = shadow.querySelector('#layer input[data-cgbd-master="recents"]');
+      const heading = document.getElementById('recent-heading');
+      const range = document.createRange();
+      range.selectNodeContents(heading);
+      const headingText = range.getBoundingClientRect();
+      const masterRect = master.getBoundingClientRect();
+      return {
+        count: shadow.getElementById('count').textContent,
+        checked: master.checked,
+        indeterminate: master.indeterminate,
+        visibleBoxes: shadow.querySelectorAll('#layer input:not([data-cgbd-master])').length,
+        masterLeft: masterRect.left,
+        masterRight: masterRect.right,
+        headingTextLeft: headingText.left,
+        pinnedSelected: shadow.querySelector('#layer input[data-cgbd-master="pinned"]').checked,
+        projectsSelected: shadow.querySelector('#layer input[data-cgbd-master="projects"]').checked
+      };
+    });
+    const clickMaster = () => page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input[data-cgbd-master="recents"]').click());
+    assert.strictEqual((await state()).visibleBoxes, 5, 'visible project and pinned rows each have their own row checkbox');
+    const initial = await state();
+    assert.ok(initial.masterLeft >= 8, 'master checkbox has a sidebar inset');
+    assert.ok(initial.masterRight + 4 <= initial.headingTextLeft,
+      'master checkbox sits left of the heading with a gap (' + JSON.stringify(initial) + ')');
+    await clickMaster();
+    const selectedAll = await state();
+    assert.strictEqual(selectedAll.count, '4 selected');
+    assert.strictEqual(selectedAll.checked, true);
+    assert.strictEqual(selectedAll.indeterminate, false);
+    assert.strictEqual(selectedAll.pinnedSelected, false);
+    assert.strictEqual(selectedAll.projectsSelected, false);
+    await clickMaster();
+    const cleared = await state();
+    assert.strictEqual(cleared.count, '0 selected');
+    assert.strictEqual(cleared.checked, false);
+    assert.strictEqual(cleared.indeterminate, false);
+    assert.strictEqual(cleared.pinnedSelected, false);
+    assert.strictEqual(cleared.projectsSelected, false);
+    await page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input[data-cgbd-id$="000000000001"]').click());
+    assert.strictEqual((await state()).indeterminate, true, 'master checkbox reflects partial selection');
+    await clickMaster();
+    const selectedPartial = await state();
+    assert.strictEqual(selectedPartial.count, '4 selected');
+    assert.strictEqual(selectedPartial.checked, true);
+    assert.strictEqual(selectedPartial.indeterminate, false);
+    assert.strictEqual(selectedPartial.pinnedSelected, false);
+    assert.strictEqual(selectedPartial.projectsSelected, false);
+  } finally { await page.close(); }
+});
+
 // ---------------- theming ----------------
 async function themed(bodyStyle) {
   const page = await newPage();
   await page.evaluate((st) => { document.body.style.cssText = st; buildPage(3); }, bodyStyle);
   await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8') });
-  await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input').length === 3);
+  await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input:not([data-cgbd-master])').length === 3);
   return page;
 }
 const cssVar = (page, name) => page.evaluate((n) => document.querySelector('div[data-cgbd]').style.getPropertyValue(n), name);
@@ -405,7 +483,7 @@ test('ui: selected rows are highlighted via CSS (page DOM untouched) and cleared
     assert.ok(!/background-color/.test(await css()));
     const attrsOf = () => page.evaluate(() => document.querySelector('li[data-id] a').outerHTML);
     const before = await attrsOf();
-    await page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input').click());
+    await page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelector('#layer input:not([data-cgbd-master])').click());
     const c = await css();
     assert.match(c, /a\[href\$="\/c\/conv0000-0000-0000-0000-000000000001"\]/);
     assert.match(c, /background-color:rgba\(236,236,236,0.12\)/);

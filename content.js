@@ -1,7 +1,7 @@
 /*
  * content.js - selection UI.
- * - Checkboxes and the action bar live in a Shadow DOM overlay; the page's own DOM is never modified.
- * - The only page-level additions are one <style> tag (row padding + highlight of selected rows).
+ * - Checkboxes and the action bar live in a Shadow DOM overlay; section labels get a small positioning attribute.
+ * - Page-level styling is limited to row padding, selected highlights, and room for section checkboxes.
  * - Colours and font are read from the live page, so the UI follows ChatGPT's light / dark / custom themes.
  */
 (function () {
@@ -13,6 +13,8 @@
   const selected = new Set();
   const boxes = new Map(); // id -> checkbox element
   const state = { running: false, stop: false };
+  const sectionBoxes = new Map();
+  let sectionsByName = new Map();
 
   // ---------- host + shadow ----------
   const host = document.createElement('div');
@@ -32,6 +34,12 @@
   #layer input:checked{background:var(--cg-fg);border-color:var(--cg-fg)}
   #layer input:checked::after{content:"";position:absolute;left:4.5px;top:1px;width:4px;height:8px;
     border:solid var(--cg-bg);border-width:0 2px 2px 0;transform:rotate(45deg)}
+  #layer input:indeterminate{background:var(--cg-fg);border-color:var(--cg-fg)}
+  #layer input:indeterminate::after{content:"";position:absolute;left:3px;top:6px;width:8px;height:2px;
+    border:0;background:var(--cg-bg);transform:none}
+  #layer input[data-cgbd-master]{width:14px;height:14px}
+  #layer input[data-cgbd-master]:checked::after{left:3.5px;top:1px;width:4px;height:7px}
+  #layer input[data-cgbd-master]:indeterminate::after{left:2px;top:5px;width:8px;height:2px}
   #layer input:focus-visible{outline:2px solid var(--cg-fg);outline-offset:2px}
 
   #bar{position:fixed;left:50%;bottom:104px;transform:translateX(-50%);width:max-content;max-width:min(94vw,680px);
@@ -131,7 +139,8 @@
   let lastFg = [236, 236, 236];
   function renderSelectionStyle(fg) {
     if (fg) lastFg = fg;
-    const base = 'nav a[href*="/c/"],aside a[href*="/c/"]{padding-inline-start:32px !important}';
+    const base = 'nav a[href*="/c/"],aside a[href*="/c/"]{padding-inline-start:32px !important}' +
+      '[data-cgbd-section-heading="1"]{padding-inline-start:20px !important}';
     const sel = [...selected].map((id) => 'nav a[href$="/c/' + id + '"],aside a[href$="/c/' + id + '"]');
     pageStyle.textContent = base + (sel.length ? '\n' + sel.join(',') + '{background-color:' + rgb(lastFg, 0.12) + ' !important}' : '');
   }
@@ -140,6 +149,7 @@
   function makeBox(id) {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
+    cb.setAttribute('data-cgbd-id', id);
     cb.title = 'Select for bulk delete';
     cb.setAttribute('aria-label', 'Select conversation for bulk delete');
     cb.checked = selected.has(id);
@@ -152,6 +162,84 @@
     layer.appendChild(cb);
     boxes.set(id, cb);
     return cb;
+  }
+
+  function sectionHeadings(sidebar) {
+    if (!sidebar) return [];
+    const candidates = [...sidebar.querySelectorAll('*')]
+      .filter((el) => ['recents', 'pinned', 'projects'].includes((el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()));
+    return candidates.filter((el) => ![...el.children].some((child) =>
+      (child.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase() === (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()));
+  }
+
+  function headingTextRect(heading) {
+    const range = document.createRange();
+    range.selectNodeContents(heading);
+    return range.getBoundingClientRect();
+  }
+
+  function masterBoxFor(heading, sectionName) {
+    let cb = sectionBoxes.get(heading);
+    if (cb) return cb;
+    cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.setAttribute('data-cgbd-master', sectionName);
+    cb.setAttribute('aria-label', 'Select all loaded ' + sectionName.toLowerCase() + ' conversations');
+    cb.title = 'Select or clear all loaded ' + sectionName.toLowerCase() + ' conversations';
+    cb.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const ids = sectionsByName.get(sectionName) || new Set();
+      for (const id of ids) {
+        if (cb.checked) selected.add(id); else selected.delete(id);
+      }
+      renderSelectionStyle();
+      updateCount();
+    });
+    layer.appendChild(cb);
+    sectionBoxes.set(heading, cb);
+    return cb;
+  }
+
+  function syncSectionBoxes(sidebar, rows) {
+    const headings = sectionHeadings(sidebar);
+    const rowGroups = new Map(headings.map((h) => [h, new Set()]));
+    let headingIndex = 0;
+    for (const row of rows) {
+      while (headingIndex < headings.length && headings[headingIndex] !== row.anchor &&
+        (headings[headingIndex].compareDocumentPosition(row.anchor) & Node.DOCUMENT_POSITION_FOLLOWING)) headingIndex++;
+      const heading = headings[headingIndex - 1];
+      if (heading) rowGroups.get(heading).add(row.id);
+    }
+    sectionsByName = new Map();
+    for (const [heading, ids] of rowGroups) {
+      const name = (heading.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!ids.size) {
+        heading.removeAttribute('data-cgbd-section-heading');
+        const emptySectionBox = sectionBoxes.get(heading);
+        if (emptySectionBox) emptySectionBox.style.display = 'none';
+        continue;
+      }
+      heading.setAttribute('data-cgbd-section-heading', '1');
+      if (!sectionsByName.has(name)) sectionsByName.set(name, new Set());
+      for (const id of ids) sectionsByName.get(name).add(id);
+      const cb = masterBoxFor(heading, name);
+      const rect = headingTextRect(heading);
+      const sidebarRect = sidebar.getBoundingClientRect();
+      cb.style.display = rect.width && rect.height && ids.size ? 'block' : 'none';
+      cb.style.left = Math.max(sidebarRect.left, rect.left - 24) + 'px';
+      cb.style.top = Math.round(rect.top + rect.height / 2 - 7) + 'px';
+      cb.disabled = state.running || ids.size === 0;
+      const selectedCount = [...ids].filter((id) => selected.has(id)).length;
+      cb.checked = ids.size > 0 && selectedCount === ids.size;
+      cb.indeterminate = selectedCount > 0 && selectedCount < ids.size;
+    }
+    for (const [heading, cb] of sectionBoxes) {
+      if (!heading.isConnected || !rowGroups.has(heading) || !rowGroups.get(heading).size) {
+        heading.removeAttribute('data-cgbd-section-heading');
+        cb.remove();
+        sectionBoxes.delete(heading);
+      }
+    }
   }
 
   let rafPending = false;
@@ -176,7 +264,8 @@
     rafPending = false;
     if (state.running) return;
     const seen = new Set();
-    for (const r of E.listRows(document)) {
+    const rows = E.listRows(document);
+    for (const r of rows) {
       const rect = visibleRect(r.anchor);
       if (!rect) continue;
       seen.add(r.id);
@@ -188,6 +277,7 @@
     for (const [id, cb] of boxes) {
       if (!seen.has(id)) { cb.remove(); boxes.delete(id); }
     }
+    syncSectionBoxes(E.sidebarContainer(document), rows);
     updateCount();
   }
 
@@ -201,6 +291,14 @@
     $('dismiss').classList.toggle('hidden', state.running || !hasStatus());
     $('bar').classList.toggle('hidden', !(selected.size > 0 || state.running || hasStatus()));
     layer.style.visibility = state.running ? 'hidden' : 'visible';
+    for (const [heading, cb] of sectionBoxes) {
+      const name = (heading.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const ids = sectionsByName.get(name) || new Set();
+      const selectedCount = [...ids].filter((id) => selected.has(id)).length;
+      cb.checked = ids.size > 0 && selectedCount === ids.size;
+      cb.indeterminate = selectedCount > 0 && selectedCount < ids.size;
+      cb.disabled = state.running || ids.size === 0;
+    }
   }
   const status = (msg) => {
     $('status').textContent = msg || '';
@@ -239,6 +337,7 @@
     renderSelectionStyle();
     updateCount();
   });
+  $('selVis').title = 'Select every conversation currently visible in the sidebar';
   $('clear').addEventListener('click', () => {
     selected.clear();
     for (const cb of boxes.values()) cb.checked = false;

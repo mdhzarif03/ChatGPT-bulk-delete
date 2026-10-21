@@ -7,7 +7,7 @@ conversation as deleted once it has actually left the sidebar.
 > **Unofficial.** Not affiliated with or endorsed by OpenAI. **Deleting a conversation is permanent.** Use at your own risk.
 
 ## Features
-- Checkbox on the left of every conversation, plus **Select visible** and **Clear**.
+- Checkbox on the left of every visible conversation, with separate master checkboxes beside **Projects**, **Pinned**, and **Recents**. Each selects only its own loaded section, including off-screen rows. **Select visible** and **Clear** are also available.
 - A bar at the bottom centre appears only while something is selected, showing the count and the actions.
 - Selected rows are highlighted. Colours and font follow ChatGPT's own theme (light, dark and custom accents).
 - Deletes sequentially, with progress and a final report: deleted / skipped / failed / not attempted.
@@ -37,7 +37,7 @@ Replace the old folder's contents with the new version, then press the reload ic
 
 ## Use
 1. Tick one or more conversations in the sidebar. The bar appears at the bottom.
-2. (Optional) **Select visible** ticks every conversation currently shown; **Clear** unticks everything.
+2. (Optional) Use the checkbox beside **Projects**, **Pinned**, or **Recents** to select or clear only that loaded section, including off-screen rows. **Select visible** selects currently visible rows across sections; **Clear** unticks everything.
 3. Press **Delete selected** and confirm.
 4. Watch the progress. Leave the tab open and in front while it runs. Press **Stop after current** to halt after the
    conversation in progress.
@@ -72,7 +72,7 @@ and prints what the extension found there.
 ## Development
 ```
 npm install      # Playwright (tests run in real Chromium)
-npm test         # syntax check + manifest validation + 34 tests
+npm test         # syntax check + manifest validation + 35 tests
 ```
 - `engine.js` - deletion engine (pure DOM logic, no extension APIs).
 - `content.js` - checkbox overlay, action bar, theming.

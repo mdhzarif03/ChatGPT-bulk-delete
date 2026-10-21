@@ -164,6 +164,11 @@
     return best ? { g: best.g, list: best.list } : { g: null, list: [] };
   }
 
+  function sidebarContainer(doc) {
+    if (pinnedSidebar && pinnedSidebar.isConnected) return pinnedSidebar;
+    return pickSidebar(conversationAnchors(doc)).g;
+  }
+
   function listRows(doc) {
     const map = new Map();
     for (const a of conversationAnchors(doc)) {
@@ -557,7 +562,7 @@
   return {
     BatchError, DEFAULT_TIMEOUTS,
     extractId, norm, waitFor, realClick, pressEscape, hover,
-    listRows, resolveEntry, findOptionsButton, findDeleteItem, findConfirmButton,
+    listRows, sidebarContainer, resolveEntry, findOptionsButton, findDeleteItem, findConfirmButton,
     visibleMenus, visibleDialogs, deleteOne, runBatch, diagnose, snapshot
   };
 });
