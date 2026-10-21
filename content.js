@@ -15,6 +15,7 @@
   const state = { running: false, stop: false };
   const sectionBoxes = new Map();
   let sectionsByName = new Map();
+  let rangeAnchorId = null;
 
   // ---------- host + shadow ----------
   const host = document.createElement('div');
@@ -155,7 +156,28 @@
     cb.checked = selected.has(id);
     cb.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      if (cb.checked) selected.add(id); else selected.delete(id);
+      if (ev.shiftKey && rangeAnchorId) {
+        const rows = E.listRows(document);
+        const anchorIndex = rows.findIndex((row) => row.id === rangeAnchorId);
+        const targetIndex = rows.findIndex((row) => row.id === id);
+        if (anchorIndex >= 0 && targetIndex >= 0) {
+          const start = Math.min(anchorIndex, targetIndex);
+          const end = Math.max(anchorIndex, targetIndex);
+          for (let i = start; i <= end; i++) {
+            const rangeId = rows[i].id;
+            selected.add(rangeId);
+            const rangeBox = boxes.get(rangeId);
+            if (rangeBox) rangeBox.checked = true;
+          }
+          cb.checked = true;
+        } else {
+          if (cb.checked) selected.add(id); else selected.delete(id);
+          rangeAnchorId = id;
+        }
+      } else {
+        if (cb.checked) selected.add(id); else selected.delete(id);
+        rangeAnchorId = id;
+      }
       renderSelectionStyle();
       updateCount();
     });
@@ -340,7 +362,12 @@
   $('selVis').title = 'Select every conversation currently visible in the sidebar';
   $('clear').addEventListener('click', () => {
     selected.clear();
+    rangeAnchorId = null;
     for (const cb of boxes.values()) cb.checked = false;
+    for (const cb of sectionBoxes.values()) {
+      cb.checked = false;
+      cb.indeterminate = false;
+    }
     renderSelectionStyle();
     updateCount();
   });

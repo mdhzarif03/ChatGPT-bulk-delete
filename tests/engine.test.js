@@ -433,6 +433,52 @@ test('ui: Recents checkbox selects its loaded rows without selecting Pinned or P
   } finally { await page.close(); }
 });
 
+test('ui: Shift-click selects the loaded sidebar range in either direction', async () => {
+  const page = await newPage();
+  try {
+    await page.evaluate(() => buildPage(6));
+    await page.addScriptTag({ content: fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8') });
+    await page.waitForFunction(() => document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input[data-cgbd-id]').length === 6);
+
+    const clickRow = async (index, shiftKey) => {
+      const box = await page.evaluate((i) => {
+        const r = document.querySelector('div[data-cgbd]').shadowRoot.querySelectorAll('#layer input[data-cgbd-id]')[i].getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      }, index);
+      if (shiftKey) await page.keyboard.down('Shift');
+      await page.mouse.click(box.x, box.y);
+      if (shiftKey) await page.keyboard.up('Shift');
+    };
+    const state = () => page.evaluate(() => {
+      const shadow = document.querySelector('div[data-cgbd]').shadowRoot;
+      return {
+        selected: [...shadow.querySelectorAll('#layer input[data-cgbd-id]')].map((cb) => cb.checked),
+        count: shadow.getElementById('count').textContent
+      };
+    });
+
+    await clickRow(1, false);
+    await clickRow(4, true);
+    const firstRange = await state();
+    assert.deepStrictEqual(firstRange.selected, [false, true, true, true, true, false]);
+    assert.strictEqual(firstRange.count, '4 selected');
+
+    await page.evaluate(() => document.querySelector('div[data-cgbd]').shadowRoot.getElementById('clear').click());
+    await clickRow(4, false);
+    await clickRow(1, true);
+    assert.deepStrictEqual(await state(), {
+      selected: [false, true, true, true, true, false],
+      count: '4 selected'
+    });
+
+    await clickRow(2, true);
+    assert.deepStrictEqual(await state(), {
+      selected: [false, true, true, true, true, false],
+      count: '4 selected'
+    });
+  } finally { await page.close(); }
+});
+
 // ---------------- theming ----------------
 async function themed(bodyStyle) {
   const page = await newPage();
