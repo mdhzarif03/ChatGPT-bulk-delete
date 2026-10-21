@@ -156,7 +156,7 @@
 
   let rafPending = false;
   function scheduleSync() {
-    if (rafPending) return;
+    if (state.running || rafPending) return;
     rafPending = true;
     requestAnimationFrame(sync);
   }
@@ -174,6 +174,7 @@
 
   function sync() {
     rafPending = false;
+    if (state.running) return;
     const seen = new Set();
     for (const r of E.listRows(document)) {
       const rect = visibleRect(r.anchor);
@@ -210,13 +211,13 @@
   // Throttle page churn so a busy sidebar cannot indefinitely postpone its next sync.
   let syncTimer = null;
   new MutationObserver(() => {
-    if (syncTimer !== null) return;
+    if (state.running || syncTimer !== null) return;
     syncTimer = setTimeout(() => { syncTimer = null; scheduleSync(); }, 120);
   }).observe(document.body, { childList: true, subtree: true });
   // Theme switches change attributes/classes on <html>/<body>, not the sidebar subtree.
   let themeTimer = null;
   const scheduleThemeSync = () => {
-    if (themeTimer !== null) return;
+    if (state.running || themeTimer !== null) return;
     themeTimer = setTimeout(() => {
       themeTimer = null;
       applyTheme();
@@ -267,6 +268,14 @@
   function report(summary) {
     const lines = [];
     lines.push('Deleted (verified): ' + summary.deleted.length);
+    if (summary.phaseMs) {
+      const seconds = (ms) => (ms / 1000).toFixed(1) + 's';
+      lines.push('Engine time: menu ' + seconds(summary.phaseMs.menu) +
+        ', delete action ' + seconds(summary.phaseMs.delete_action) +
+        ', confirm ' + seconds(summary.phaseMs.confirm) +
+        ', verify/safety checks ' + seconds(summary.phaseMs.verify) +
+        ', setup ' + seconds(summary.phaseMs.prepare));
+    }
     if (summary.skipped.length) lines.push('Skipped (not in sidebar): ' + summary.skipped.length);
     if (summary.failed.length) {
       const f = summary.failed[0];
@@ -313,7 +322,7 @@
     } finally {
       state.running = false; state.stop = false;
       $('stop').classList.add('hidden');
-      updateCount(); scheduleSync();
+      applyTheme(); updateCount(); scheduleSync();
     }
   });
 

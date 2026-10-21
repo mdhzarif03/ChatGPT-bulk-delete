@@ -300,6 +300,20 @@ test('sim: 20 sequential deletions stay bounded', async () => {
   assert.ok(r.ms < 15000, 'took ' + r.ms);
 });
 
+test('sim: 300 sequential deletions complete with each result verified', async () => {
+  const r = await inPage(async (T) => {
+    const p = buildPage(300);
+    const t0 = performance.now();
+    const s = await CGBD.runBatch(p.ids, { doc: document, timeouts: T });
+    return { deleted: s.deleted.length, failed: s.failed.length, rows: p.rowCount(), ms: performance.now() - t0, phaseMs: s.phaseMs };
+  }, T);
+  assert.strictEqual(r.deleted, 300);
+  assert.strictEqual(r.failed, 0);
+  assert.strictEqual(r.rows, 0);
+  assert.ok(Object.values(r.phaseMs).every((ms) => Number.isFinite(ms) && ms >= 0));
+  assert.ok(r.ms < 30000, 'took ' + r.ms + 'ms');
+});
+
 // ---------------- content-script UI smoke test (real Chromium, fake page) ----------------
 test('ui: checkboxes appear per row, Select visible / Clear / count, and a batch runs through the panel', async () => {
   const page = await newPage();

@@ -11,6 +11,7 @@ conversation as deleted once it has actually left the sidebar.
 - A bar at the bottom centre appears only while something is selected, showing the count and the actions.
 - Selected rows are highlighted. Colours and font follow ChatGPT's own theme (light, dark and custom accents).
 - Deletes sequentially, with progress and a final report: deleted / skipped / failed / not attempted.
+- The final report includes time spent preparing each row, opening menus, selecting Delete, confirming, and verifying removal.
 - Responsive batch operation: menu fallbacks are bounded by one timeout, and sidebar verification scans only the pinned sidebar.
 - **Verified deletion:** success is reported only after that conversation's ID has disappeared from the sidebar.
 - **Safe by default:** if anything is ambiguous or fails (wrong menu, missing button, unexpected dialog, another chat vanishing),
@@ -62,6 +63,7 @@ The engine lives in [`engine.js`](engine.js) and the interface in [`content.js`]
 | No checkboxes | Reload the ChatGPT tab; make sure the extension is enabled. |
 | Bar says `menu_not_opened` / `no_delete_item` / `no_confirm_button` | ChatGPT's interface probably changed. Use the debug text the bar copies to your clipboard and open an issue (see [CONTRIBUTING.md](CONTRIBUTING.md)). |
 | Some chats were not deleted | The bar lists what was not attempted; they stay selected, so just press **Delete selected** again. |
+| Bulk deletion is unexpectedly slow | Check the final report's phase timings to see whether time is spent waiting on ChatGPT's UI or on verification. |
 | A message box asks to confirm | That is this extension's safety prompt, not ChatGPT's. |
 
 The **...** button in the bar opens **Diagnostics**: *Dump DOM evidence* opens and closes one row's menu (deleting nothing)
@@ -70,7 +72,7 @@ and prints what the extension found there.
 ## Development
 ```
 npm install      # Playwright (tests run in real Chromium)
-npm test         # syntax check + manifest validation + 33 tests
+npm test         # syntax check + manifest validation + 34 tests
 ```
 - `engine.js` - deletion engine (pure DOM logic, no extension APIs).
 - `content.js` - checkbox overlay, action bar, theming.
@@ -83,7 +85,7 @@ npm test         # syntax check + manifest validation + 33 tests
   working on chatgpt.com by the author in October 2026, and a future redesign may break it (the extension is built to stop
   and report, not to guess).
 - Only conversations loaded in the sidebar can be selected; scroll to load older ones.
-- Deletion speed is bounded by how fast ChatGPT's own menus respond. The extension keeps deletions sequential and verifies each one to avoid deleting the wrong conversation; it avoids unnecessary page-wide scans and does not wait through a full timeout for every fallback interaction.
+- Deletion speed is bounded by how fast ChatGPT's own menus respond. The extension keeps deletions sequential and verifies each one to avoid deleting the wrong conversation. Large batches avoid redundant sidebar scans, and checkbox positioning pauses while deletion is running.
 - Archiving or "delete all chats" are out of scope (use ChatGPT's own Settings for that).
 - Chrome / Chromium only; the extension is English-UI oriented (it looks for a menu item literally named "Delete").
 

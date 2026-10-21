@@ -75,7 +75,7 @@
         mo = new MO(() => {
           if (done) return;
           clearTimeout(timer);
-          timer = setTimeout(tick, Math.max(0, 30 - (Date.now() - last)));
+          timer = setTimeout(tick, Math.max(0, 10 - (Date.now() - last)));
         });
         mo.observe(doc.documentElement, { childList: true, subtree: true, attributes: true });
       }
@@ -173,6 +173,41 @@
       else map.set(id, { id, anchor: a, anchors: [a], title: (a.textContent || '').replace(/\s+/g, ' ').trim() });
     }
     return [...map.values()];
+  }
+
+  function snapshotEntryAndIds(doc, targetId) {
+    const ids = new Set();
+    let entry = null;
+    for (const a of conversationAnchors(doc)) {
+      const id = extractId(a.getAttribute('href'));
+      if (!id) continue;
+      ids.add(id);
+      if (id !== targetId) continue;
+      if (!entry) entry = { id, anchor: a, anchors: [a], title: (a.textContent || '').replace(/\s+/g, ' ').trim() };
+      else entry.anchors.push(a);
+    }
+    return { ids: [...ids], entry };
+  }
+
+  function conversationIdSet(doc) {
+    const ids = new Set();
+    for (const a of conversationAnchors(doc)) {
+      const id = extractId(a.getAttribute('href'));
+      if (id) ids.add(id);
+    }
+    return ids;
+  }
+
+  function hasConversationId(doc, id) {
+    const container = pinnedSidebar && pinnedSidebar.isConnected ? pinnedSidebar : null;
+    const anchors = container
+      ? container.querySelectorAll('a[href*="/c/"]')
+      : conversationAnchors(doc);
+    for (const a of anchors) {
+      if (!inOwnUi(a) && !a.closest('[role=menu],[role=dialog],[role=alertdialog]') &&
+        extractId(a.getAttribute('href')) === id) return true;
+    }
+    return false;
   }
 
   function resolveEntryFromRows(rows, id) {
@@ -354,59 +389,77 @@
     throw new BatchError('ambiguous_confirm', matches.length + ' confirm buttons found in the dialog; refusing to guess.', { count: matches.length });
   }
 
+  async function timePhase(doc, opts, id, phase, action) {
+    const now = doc.defaultView.performance.now.bind(doc.defaultView.performance);
+    const start = now();
+    try {
+      return await action();
+    } finally {
+      opts.phaseMs[phase] += now() - start;
+    }
+  }
+
   // ---------- one deletion ----------
   async function deleteOne(doc, id, opts) {
+    opts.phaseMs = opts.phaseMs || { prepare: 0, menu: 0, delete_action: 0, confirm: 0, verify: 0 };
     const t = Object.assign({}, DEFAULT_TIMEOUTS, opts.timeouts || {});
-    await ensureClean(doc, t);
-
-    const beforeRows = listRows(doc);
-    const entry = resolveEntryFromRows(beforeRows, id); // fresh every time
-    if (!entry) return { id, status: 'skipped', reason: 'not_in_sidebar' };
-
-    const before = beforeRows.map((r) => r.id);
-    const btn = findOptionsButton(entry);
-    hover(entry.anchor);
-    const menu = await openMenu(doc, btn, t, { anchor: entry.anchor });
-    const item = findDeleteItem(menu);
-
-    const dialogsBefore = new Set(visibleDialogs(doc));
-    realClick(item);
-
-    const rowGone = () => !listRows(doc).some((r) => r.id === id);
-    const first = await waitFor(() => {
-      const fresh = visibleDialogs(doc).filter((d) => !dialogsBefore.has(d));
-      if (fresh.length) return { dialogs: fresh };
-      if (rowGone()) return { gone: true };
-      return null;
-    }, { timeout: t.dialog, doc });
-    if (!first) throw new BatchError('no_confirm_dialog', 'No confirmation dialog appeared after choosing Delete, and the conversation is still listed.');
-
+    const prepared = await timePhase(doc, opts, id, 'prepare', async () => {
+      await ensureClean(doc, t);
+      const beforeSnapshot = snapshotEntryAndIds(doc, id);
+      const entry = resolveEntryFromRows(beforeSnapshot.entry ? [beforeSnapshot.entry] : [], id);
+      if (!entry) return null;
+      const btn = findOptionsButton(entry);
+      hover(entry.anchor);
+      return { entry, before: beforeSnapshot.ids, btn };
+    });
+    if (!prepared) return { id, status: 'skipped', reason: 'not_in_sidebar' };
+    const { entry, before, btn } = prepared;
+    const menu = await timePhase(doc, opts, id, 'menu', () => openMenu(doc, btn, t, { anchor: entry.anchor }));
+    const { first, rowGone } = await timePhase(doc, opts, id, 'delete_action', async () => {
+      const item = findDeleteItem(menu);
+      const dialogsBefore = new Set(visibleDialogs(doc));
+      realClick(item);
+      const isGone = () => !hasConversationId(doc, id);
+      const result = await waitFor(() => {
+        const fresh = visibleDialogs(doc).filter((d) => !dialogsBefore.has(d));
+        if (fresh.length) return { dialogs: fresh };
+        if (isGone()) return { gone: true };
+        return null;
+      }, { timeout: t.dialog, doc });
+      if (!result) throw new BatchError('no_confirm_dialog', 'No confirmation dialog appeared after choosing Delete, and the conversation is still listed.');
+      return { first: result, rowGone: isGone };
+    });
     const warnings = [];
     let usedDialog = false;
     if (first.dialogs) {
       if (first.dialogs.length > 1) throw new BatchError('ambiguous_dialog', first.dialogs.length + ' dialogs appeared; cannot tell which to confirm.');
       const dlg = first.dialogs[0];
-      const confirm = findConfirmButton(dlg);
       if (entry.title && !norm(dlg.textContent).includes(norm(entry.title))) {
         warnings.push('Dialog text did not mention the conversation title; target verified by ID only.');
       }
       usedDialog = true;
-      realClick(confirm);
+      await timePhase(doc, opts, id, 'confirm', () => {
+        realClick(findConfirmButton(dlg));
+      });
     }
 
-    const ok = await waitFor(() => rowGone() && visibleDialogs(doc).length === 0, { timeout: t.verify, doc });
-    if (!ok) {
-      throw new BatchError(rowGone() ? 'dialog_stuck' : 'not_deleted',
-        rowGone() ? 'Conversation disappeared but a dialog is still open.' : 'Confirmation was clicked but the conversation is still in the sidebar.');
-    }
+    await timePhase(doc, opts, id, 'verify', async () => {
+      const ok = await waitFor(() => rowGone() && visibleDialogs(doc).length === 0, { timeout: t.verify, doc });
+      if (!ok) {
+        throw new BatchError(rowGone() ? 'dialog_stuck' : 'not_deleted',
+          rowGone() ? 'Conversation disappeared but a dialog is still open.' : 'Confirmation was clicked but the conversation is still in the sidebar.');
+      }
 
-    // Collateral check: nothing else that was listed before may have vanished.
-    const others = before.filter((x) => x !== id);
-    const missing = () => others.filter((x) => !listRows(doc).some((r) => r.id === x));
-    const settled = await waitFor(() => missing().length === 0, { timeout: t.settle, doc });
-    if (!settled) {
-      throw new BatchError('collateral', 'Other conversations disappeared during this deletion: ' + missing().join(', '), { missing: missing() });
-    }
+      const others = before.filter((x) => x !== id);
+      const missing = () => {
+        const present = conversationIdSet(doc);
+        return others.filter((x) => !present.has(x));
+      };
+      const settled = await waitFor(() => missing().length === 0, { timeout: t.settle, doc });
+      if (!settled) {
+        throw new BatchError('collateral', 'Other conversations disappeared during this deletion: ' + missing().join(', '), { missing: missing() });
+      }
+    });
     return { id, status: 'deleted', title: entry.title, usedDialog, warnings };
   }
 
@@ -426,6 +479,7 @@
     const doc = opts.doc || document;
     const hooks = opts.hooks || {};
     const results = [];
+    const phaseMs = { prepare: 0, menu: 0, delete_action: 0, confirm: 0, verify: 0 };
     let stopped = null;
     pinnedSidebar = null;
     pinnedSidebar = pickSidebar(conversationAnchors(doc)).g || null;
@@ -435,7 +489,7 @@
       const id = ids[i];
       if (hooks.onProgress) hooks.onProgress({ index: i, total: ids.length, id, phase: 'start' });
       try {
-        const r = await deleteOne(doc, id, opts);
+        const r = await deleteOne(doc, id, Object.assign({}, opts, { phaseMs }));
         results.push(r);
         if (hooks.onProgress) hooks.onProgress({ index: i, total: ids.length, id, phase: r.status, result: r });
       } catch (err) {
@@ -456,7 +510,8 @@
       failed: results.filter((r) => r.status === 'failed'),
       notAttempted,
       stopped,
-      results
+      results,
+      phaseMs
     };
   }
 
