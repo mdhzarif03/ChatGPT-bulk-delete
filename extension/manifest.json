@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Bulk Conversation Delete",
+  "version": "1.0.0",
+  "description": "Select multiple conversations in the ChatGPT sidebar and delete them one by one through the normal UI, verifying each deletion.",
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["engine.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

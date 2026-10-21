@@ -1,0 +1,14 @@
+{
+  "name": "chatgpt-bulk-delete",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "check:syntax": "node tools/check-syntax.js",
+    "check:manifest": "node tools/validate-manifest.js",
+    "test:unit": "node --test tests/*.test.js",
+    "test": "npm run check:syntax && npm run check:manifest && npm run test:unit"
+  },
+  "devDependencies": {
+    "playwright": "^1.50.0"
+  }
+}
