@@ -17,37 +17,44 @@
 <style>
   :host{all:initial}
   *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  .panel{position:fixed;left:12px;bottom:90px;width:244px;background:#1f1f1f;color:#eee;border:1px solid #444;border-radius:10px;
-    box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:12.5px;pointer-events:auto}
-  @media (prefers-color-scheme: light){.panel{background:#fff;color:#111;border-color:#ccc}}
-  .hdr{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #444}
-  .hdr b{flex:1}
-  .body{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
-  .row{display:flex;gap:6px}
-  button{cursor:pointer;border:1px solid #666;background:transparent;color:inherit;border-radius:6px;padding:5px 8px;font-size:12px;flex:1}
-  button:hover:not(:disabled){background:rgba(128,128,128,.2)}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  button.danger{background:#b3261e;border-color:#b3261e;color:#fff}
-  button.danger:disabled{background:#b3261e}
-  #status{white-space:pre-wrap;max-height:150px;overflow:auto;line-height:1.35}
-  textarea{width:100%;height:80px;font:11px monospace}
-  summary{cursor:pointer}
-  .hidden{display:none!important}
   #layer{position:fixed;inset:0;pointer-events:none}
-  #layer input{position:fixed;width:16px;height:16px;margin:0;pointer-events:auto;cursor:pointer;accent-color:#10a37f;outline:1px solid rgba(128,128,128,.6);border-radius:3px;background:#2a2a2a}
+  #layer input{position:fixed;width:16px;height:16px;margin:0;pointer-events:auto;cursor:pointer;accent-color:#10a37f;border-radius:4px}
+  #bar{position:fixed;left:50%;bottom:104px;transform:translateX(-50%);max-width:min(94vw,640px);
+    background:#2f2f2f;color:#ececec;border:1px solid #4a4a4a;border-radius:16px;padding:8px 10px;
+    box-shadow:0 8px 28px rgba(0,0,0,.45);font-size:13px;pointer-events:auto;display:flex;flex-direction:column;gap:6px}
+  #row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
+  #count{font-weight:600;padding:0 4px;white-space:nowrap}
+  button{cursor:pointer;border:1px solid #5a5a5a;background:transparent;color:inherit;border-radius:999px;padding:6px 12px;font-size:13px;white-space:nowrap}
+  button:hover:not(:disabled){background:rgba(255,255,255,.1)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.danger{background:#d93025;border-color:#d93025;color:#fff;font-weight:600}
+  button.danger:hover:not(:disabled){background:#e8453b}
+  button.icon{padding:6px 10px}
+  #status{white-space:pre-wrap;max-height:160px;overflow:auto;line-height:1.4;padding:2px 6px;text-align:left}
+  #diagBox{display:flex;flex-direction:column;gap:6px}
+  textarea{width:100%;height:90px;font:11px monospace;background:#1e1e1e;color:#ddd;border:1px solid #4a4a4a;border-radius:8px}
+  .hidden{display:none!important}
+  @media (prefers-color-scheme: light){
+    #bar{background:#fff;color:#111;border-color:#ccc}
+    button{border-color:#bbb} button:hover:not(:disabled){background:rgba(0,0,0,.06)}
+    textarea{background:#f6f6f6;color:#111;border-color:#ccc}
+  }
 </style>
 <div id="layer"></div>
-<div class="panel" id="panel">
-  <div class="hdr"><b>Bulk delete</b><span id="count">0 selected</span><button id="min" style="flex:none" title="Minimize">–</button></div>
-  <div class="body" id="body">
-    <div class="row"><button id="selVis">Select visible</button><button id="clear">Clear</button></div>
+<div id="bar" class="hidden" role="region" aria-label="Bulk delete">
+  <div id="row">
+    <span id="count">0 selected</span>
+    <button id="selVis" title="Select every conversation currently shown in the sidebar">Select visible</button>
+    <button id="clear">Clear</button>
     <button id="del" class="danger" disabled>Delete selected</button>
     <button id="stop" class="hidden">Stop after current</button>
-    <div id="status" role="status"></div>
-    <details><summary>Diagnostics</summary>
-      <button id="diag" title="Opens (then closes) the options menu of one row. Deletes nothing.">Dump DOM evidence (no delete)</button>
-      <textarea id="out" readonly></textarea>
-    </details>
+    <button id="more" class="icon" title="Diagnostics" aria-label="Diagnostics">&#8943;</button>
+    <button id="dismiss" class="icon hidden" title="Dismiss" aria-label="Dismiss">&times;</button>
+  </div>
+  <div id="status" class="hidden" role="status"></div>
+  <div id="diagBox" class="hidden">
+    <button id="diag" title="Opens (then closes) the options menu of one row. Deletes nothing.">Dump DOM evidence (no delete)</button>
+    <textarea id="out" readonly></textarea>
   </div>
 </div>`;
   const $ = (id) => root.getElementById(id);
@@ -76,13 +83,6 @@
     requestAnimationFrame(sync);
   }
 
-  function placePanel() {
-    const nav = document.querySelector('nav');
-    const nr = nav ? nav.getBoundingClientRect() : null;
-    const left = nr && nr.width > 40 && nr.right < innerWidth * 0.6 ? Math.round(nr.right + 12) : 12;
-    $('panel').style.left = left + 'px';
-  }
-
   // A row is "really visible" only if its own pixels are what the user would hit at that point
   // (excludes rows scrolled under sticky headers, covered by menus, etc.).
   function visibleRect(a) {
@@ -96,14 +96,13 @@
 
   function sync() {
     rafPending = false;
-    placePanel();
     const seen = new Set();
     for (const r of E.listRows(document)) {
       const rect = visibleRect(r.anchor);
       if (!rect) continue;
       seen.add(r.id);
       const cb = boxes.get(r.id) || makeBox(r.id);
-      cb.style.left = Math.round(rect.right - 62) + 'px';
+      cb.style.left = Math.round(rect.left + 9) + 'px';
       cb.style.top = Math.round(rect.top + rect.height / 2 - 8) + 'px';
       if (cb.checked !== selected.has(r.id)) cb.checked = selected.has(r.id);
     }
@@ -119,6 +118,8 @@
     $('selVis').disabled = state.running;
     $('clear').disabled = state.running;
     $('diag').disabled = state.running;
+    $('dismiss').classList.toggle('hidden', state.running || !hasStatus());
+    $('bar').classList.toggle('hidden', !(selected.size > 0 || state.running || hasStatus()));
     layer.style.visibility = state.running ? 'hidden' : 'visible';
   }
 
@@ -133,7 +134,12 @@
   addEventListener('popstate', scheduleSync);
 
   // ---------- actions ----------
-  const status = (msg) => { $('status').textContent = msg; };
+  const hasStatus = () => $('status').textContent !== '';
+  const status = (msg) => {
+    $('status').textContent = msg || '';
+    $('status').classList.toggle('hidden', !msg);
+    updateCount();
+  };
 
   $('selVis').addEventListener('click', () => {
     for (const id of boxes.keys()) selected.add(id);
@@ -145,11 +151,8 @@
     for (const cb of boxes.values()) cb.checked = false;
     updateCount();
   });
-  $('min').addEventListener('click', () => {
-    state.minimized = !state.minimized;
-    $('body').classList.toggle('hidden', state.minimized);
-    $('min').textContent = state.minimized ? '+' : '–';
-  });
+  $('more').addEventListener('click', () => $('diagBox').classList.toggle('hidden'));
+  $('dismiss').addEventListener('click', () => { status(''); });
   $('stop').addEventListener('click', () => { state.stop = true; status('Stopping after the current conversation…'); });
 
   $('diag').addEventListener('click', async () => {
@@ -204,7 +207,7 @@
       if (summary.failed.length) {
         const dbg = JSON.stringify({ code: summary.failed[0].code, message: summary.failed[0].message, detail: summary.failed[0].detail }, null, 2);
         $('out').value = dbg;
-        root.querySelector('details').open = true;
+        $('diagBox').classList.remove('hidden');
         try { await navigator.clipboard.writeText(dbg); msg += '\nDebug info copied to clipboard - paste it to the developer.'; }
         catch (e) { msg += '\nDebug info is in the Diagnostics box - copy it.'; }
       }
@@ -218,6 +221,10 @@
     }
   });
 
+  const css = document.createElement('style');
+  css.setAttribute('data-cgbd', '1');
+  css.textContent = 'nav a[href*="/c/"],aside a[href*="/c/"]{padding-inline-start:32px !important}';
+  document.head.appendChild(css);
   document.documentElement.appendChild(host);
   scheduleSync();
 })();
