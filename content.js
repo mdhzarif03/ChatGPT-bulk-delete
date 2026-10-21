@@ -146,6 +146,7 @@
     cb.addEventListener('click', (ev) => {
       ev.stopPropagation();
       if (cb.checked) selected.add(id); else selected.delete(id);
+      renderSelectionStyle();
       updateCount();
     });
     layer.appendChild(cb);
@@ -173,7 +174,6 @@
 
   function sync() {
     rafPending = false;
-    applyTheme();
     const seen = new Set();
     for (const r of E.listRows(document)) {
       const rect = visibleRect(r.anchor);
@@ -200,7 +200,6 @@
     $('dismiss').classList.toggle('hidden', state.running || !hasStatus());
     $('bar').classList.toggle('hidden', !(selected.size > 0 || state.running || hasStatus()));
     layer.style.visibility = state.running ? 'hidden' : 'visible';
-    renderSelectionStyle();
   }
   const status = (msg) => {
     $('status').textContent = msg || '';
@@ -208,17 +207,26 @@
     updateCount();
   };
 
-  // Debounced observation: the callback only schedules one cheap, rAF-batched sync.
-  let moTimer = null;
+  // Throttle page churn so a busy sidebar cannot indefinitely postpone its next sync.
+  let syncTimer = null;
   new MutationObserver(() => {
-    clearTimeout(moTimer);
-    moTimer = setTimeout(scheduleSync, 120);
+    if (syncTimer !== null) return;
+    syncTimer = setTimeout(() => { syncTimer = null; scheduleSync(); }, 120);
   }).observe(document.body, { childList: true, subtree: true });
   // Theme switches change attributes/classes on <html>/<body>, not the sidebar subtree.
-  const themeMO = new MutationObserver(() => { clearTimeout(moTimer); moTimer = setTimeout(scheduleSync, 60); });
+  let themeTimer = null;
+  const scheduleThemeSync = () => {
+    if (themeTimer !== null) return;
+    themeTimer = setTimeout(() => {
+      themeTimer = null;
+      applyTheme();
+      scheduleSync();
+    }, 60);
+  };
+  const themeMO = new MutationObserver(scheduleThemeSync);
   themeMO.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-color-mode'] });
   themeMO.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleSync);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleThemeSync);
   addEventListener('scroll', scheduleSync, { capture: true, passive: true });
   addEventListener('resize', scheduleSync, { passive: true });
   addEventListener('popstate', scheduleSync);
@@ -227,11 +235,13 @@
   $('selVis').addEventListener('click', () => {
     for (const id of boxes.keys()) selected.add(id);
     for (const [id, cb] of boxes) cb.checked = selected.has(id);
+    renderSelectionStyle();
     updateCount();
   });
   $('clear').addEventListener('click', () => {
     selected.clear();
     for (const cb of boxes.values()) cb.checked = false;
+    renderSelectionStyle();
     updateCount();
   });
   $('more').addEventListener('click', () => $('diagBox').classList.toggle('hidden'));
@@ -288,6 +298,7 @@
         }
       });
       for (const id of summary.deleted.concat(summary.skipped)) selected.delete(id);
+      renderSelectionStyle();
       let msg = report(summary);
       if (summary.failed.length) {
         const dbg = JSON.stringify({ code: summary.failed[0].code, message: summary.failed[0].message, detail: summary.failed[0].detail }, null, 2);

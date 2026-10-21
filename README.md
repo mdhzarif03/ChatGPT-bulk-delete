@@ -11,6 +11,7 @@ conversation as deleted once it has actually left the sidebar.
 - A bar at the bottom centre appears only while something is selected, showing the count and the actions.
 - Selected rows are highlighted. Colours and font follow ChatGPT's own theme (light, dark and custom accents).
 - Deletes sequentially, with progress and a final report: deleted / skipped / failed / not attempted.
+- Responsive batch operation: menu fallbacks are bounded by one timeout, and sidebar verification scans only the pinned sidebar.
 - **Verified deletion:** success is reported only after that conversation's ID has disappeared from the sidebar.
 - **Safe by default:** if anything is ambiguous or fails (wrong menu, missing button, unexpected dialog, another chat vanishing),
   it stops and tells you exactly what happened instead of guessing.
@@ -82,7 +83,7 @@ npm test         # syntax check + manifest validation + 33 tests
   working on chatgpt.com by the author in October 2026, and a future redesign may break it (the extension is built to stop
   and report, not to guess).
 - Only conversations loaded in the sidebar can be selected; scroll to load older ones.
-- Deletion speed is bounded by how fast ChatGPT's own menus respond.
+- Deletion speed is bounded by how fast ChatGPT's own menus respond. The extension keeps deletions sequential and verifies each one to avoid deleting the wrong conversation; it avoids unnecessary page-wide scans and does not wait through a full timeout for every fallback interaction.
 - Archiving or "delete all chats" are out of scope (use ChatGPT's own Settings for that).
 - Chrome / Chromium only; the extension is English-UI oriented (it looks for a menu item literally named "Delete").
 

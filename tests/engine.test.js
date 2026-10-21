@@ -167,12 +167,12 @@ test('sim: menu never opens -> menu_not_opened (timeout path)', async () => {
   const r = await inPage(async (T) => {
     const p = buildPage(1, { noMenu: true });
     const t0 = performance.now();
-    const s = await CGBD.runBatch(p.ids, { doc: document, timeouts: T });
+    const s = await CGBD.runBatch(p.ids, { doc: document, timeouts: Object.assign({}, T, { menu: 900 }) });
     return { code: s.failed[0].code, rows: p.rowCount(), ms: performance.now() - t0 };
   }, T);
   assert.strictEqual(r.code, 'menu_not_opened');
   assert.strictEqual(r.rows, 1);
-  assert.ok(r.ms < 2000, 'timeout must be bounded');
+  assert.ok(r.ms < 1800, 'all menu-opening strategies must share one timeout; took ' + r.ms + 'ms');
 });
 
 test('sim: menu never opens -> failure carries DOM evidence for debugging', async () => {

@@ -131,11 +131,14 @@
   // Only the SIDEBAR list counts. Links to the open chat elsewhere (header, breadcrumb, canvas panel...) must never be
   // treated as rows. The sidebar is the nav/aside group holding the most conversation links (ties: the leftmost).
   function conversationAnchors(doc) {
-    const all = [...doc.querySelectorAll('a[href*="/c/"]')].filter((a) =>
-      !inOwnUi(a) && extractId(a.getAttribute('href')) && !a.closest('[role=menu],[role=dialog],[role=alertdialog]'));
+    const isConversationAnchor = (a) =>
+      !inOwnUi(a) && extractId(a.getAttribute('href')) && !a.closest('[role=menu],[role=dialog],[role=alertdialog]');
+    // Once a batch starts, avoid rescanning the whole page on every verification poll.
+    if (pinnedSidebar && pinnedSidebar.isConnected) {
+      return [...pinnedSidebar.querySelectorAll('a[href*="/c/"]')].filter(isConversationAnchor);
+    }
+    const all = [...doc.querySelectorAll('a[href*="/c/"]')].filter(isConversationAnchor);
     if (!doc.querySelector('nav,aside')) return all;
-    // During a batch the sidebar container is pinned, so emptying the sidebar can never promote a header link to "row".
-    if (pinnedSidebar && pinnedSidebar.isConnected) return all.filter((a) => pinnedSidebar.contains(a));
     return pickSidebar(all).list;
   }
 
@@ -172,14 +175,18 @@
     return [...map.values()];
   }
 
-  function resolveEntry(doc, id) {
-    const e = listRows(doc).find((r) => r.id === id);
+  function resolveEntryFromRows(rows, id) {
+    const e = rows.find((r) => r.id === id);
     if (!e) return null;
     const distinct = new Set(e.anchors);
     if (distinct.size > 1) {
       throw new BatchError('ambiguous_row', 'Conversation ' + id + ' appears in the sidebar more than once; refusing to guess.', { count: distinct.size });
     }
     return e;
+  }
+
+  function resolveEntry(doc, id) {
+    return resolveEntryFromRows(listRows(doc), id);
   }
 
   // ---------- options button ----------
@@ -284,12 +291,18 @@
     ];
     let found = null;
     const tried = [];
+    const deadline = Date.now() + t.menu;
     for (const [name, go] of strategies) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
       go();
       tried.push(name);
-      found = await waitFor(fresh, { timeout: t.menu, doc });
+      found = await waitFor(fresh, { timeout: Math.min(remaining, Math.max(100, t.menu / strategies.length)), doc });
       if (found) break;
       if (visibleMenus(doc).length) break; // something opened that we cannot attribute; do not keep clicking
+    }
+    if (!found && Date.now() < deadline && visibleMenus(doc).length === 0) {
+      found = await waitFor(fresh, { timeout: deadline - Date.now(), doc });
     }
     if (!found) {
       const ev = snapshot(doc, btn);
@@ -346,10 +359,11 @@
     const t = Object.assign({}, DEFAULT_TIMEOUTS, opts.timeouts || {});
     await ensureClean(doc, t);
 
-    const entry = resolveEntry(doc, id); // fresh every time
+    const beforeRows = listRows(doc);
+    const entry = resolveEntryFromRows(beforeRows, id); // fresh every time
     if (!entry) return { id, status: 'skipped', reason: 'not_in_sidebar' };
 
-    const before = listRows(doc).map((r) => r.id);
+    const before = beforeRows.map((r) => r.id);
     const btn = findOptionsButton(entry);
     hover(entry.anchor);
     const menu = await openMenu(doc, btn, t, { anchor: entry.anchor });
